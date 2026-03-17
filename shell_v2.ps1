@@ -11,13 +11,10 @@ Add-Type -AssemblyName System.Windows.Forms
 function Capture-Webcam {
  $webcam = New-Object System.Drawing.Bitmap(640, 480)
  $graphics = [System.Drawing.Graphics]::FromImage($webcam)
-
  $webcamStream = New-Object System.IO.MemoryStream
  $webcam.Save($webcamStream, [System.Drawing.Imaging.ImageFormat]::Jpeg)
-
  $webcamStream.Seek(0, [System.IO.SeekOrigin]::Begin) | Out-Null
  $webcamBytes = $webcamStream.ToArray()
-
  return $webcamBytes
 }
 
