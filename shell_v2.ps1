@@ -1,5 +1,5 @@
 # --- CONFIG ---
-$ip   = '192.168.1.15'
+$ip   = '172.16.176.40'
 $port = 4444
 $pass = 'biskviti'
 $user = "B15cu1t"
